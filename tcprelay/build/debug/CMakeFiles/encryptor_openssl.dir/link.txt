@@ -1,0 +1,2 @@
+/usr/bin/ar cr lib/libencryptor_openssl.a  CMakeFiles/encryptor_openssl.dir/encryptor_openssl.cc.o
+/usr/bin/ranlib lib/libencryptor_openssl.a

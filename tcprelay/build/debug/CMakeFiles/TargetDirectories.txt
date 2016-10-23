@@ -1,0 +1,3 @@
+/home/johnsun/tcprelay/build/debug/CMakeFiles/encryptor_openssl.dir
+/home/johnsun/tcprelay/build/debug/CMakeFiles/muduo_cdns.dir
+/home/johnsun/tcprelay/build/debug/CMakeFiles/relay.dir
