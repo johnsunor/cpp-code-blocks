@@ -1,11 +1,6 @@
 
-#ifndef STRING_UTILS_H_
-#define STRING_UTILS_H_
-
-#include <assert.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
+#ifndef TCPRELAY_UTILS_STRING_UTILS_H_
+#define TCPRELAY_UTILS_STRING_UTILS_H_
 
 #include <iostream>
 #include <sstream>

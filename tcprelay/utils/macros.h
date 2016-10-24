@@ -1,6 +1,6 @@
 
-#ifndef HELP_UTILS_H_
-#define HELP_UTILS_H_
+#ifndef TCPRELAY_UTILS_MACROS_H_
+#define TCPRELAY_UTILS_MACROS_H_
 
 #include <stddef.h>  // For size_t.
 #include <string.h>  // For memcpy.
