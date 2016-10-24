@@ -1,6 +1,6 @@
 
-#ifndef SOCKSV5_CDNS_RESOLVER_H
-#define SOCKSV5_CDNS_RESOLVER_H
+#ifndef TCPRELAY_CDNS_RESOLVER_H_
+#define TCPRELAY_CDNS_RESOLVER_H_
 
 #include <muduo/base/StringPiece.h>
 #include <muduo/base/Timestamp.h>

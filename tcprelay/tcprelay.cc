@@ -21,18 +21,14 @@ DEFINE_string(passwd, "aes256cfb", "cipher_passwd for you wanted to use");
 DEFINE_int32(port, 3389, "server port for you wanted to use");
 DEFINE_int32(thread_num, 1, "server thread num for you wanted to use");
 
-using namespace muduo;
-using namespace muduo::net;
-using namespace crypto;
-using namespace cdns;
 
 class TCPRelayServer : boost::noncopyable {
  public:
-  typedef std::map<string, ServerConnMetaPtr> MetaList;
-  typedef std::map<string, TunnelPtr> TunnelList;
+  typedef std::map<muduo::string, ServerConnMetaPtr> MetaList;
+  typedef std::map<muduo::string, TunnelPtr> TunnelList;
   typedef boost::shared_ptr<cdns::Resolver> ResolverPtr;
 
-  TCPRelayServer(EventLoop* loop, const InetAddress& listenAddr)
+  TCPRelayServer(muduo::net::EventLoop* loop, const muduo::net::InetAddress& listenAddr)
       : server_(loop, listenAddr, "TCPRelayServer") {
     server_.setConnectionCallback(
         boost::bind(&TCPRelayServer::onServerConnection, this, _1));
@@ -48,14 +44,14 @@ class TCPRelayServer : boost::noncopyable {
     server_.start();
   }
 
-  void resolveCallback(const ServerConnMetaPtr& meta, const InetAddress& addr) {
-    const EncryptorPtr& decryptor = meta->decryptor();
-    EncryptorPtr encryptor(new Encryptor);
+  void resolveCallback(const ServerConnMetaPtr& meta, const muduo::net::InetAddress& addr) {
+    const crypto::EncryptorPtr& decryptor = meta->decryptor();
+    crypto::EncryptorPtr encryptor(new crypto::Encryptor);
     assert(encryptor->Init(decryptor->cipher_name(), decryptor->passwd(),
                            decryptor->iv(), true)); // mix iv
 
-    const TcpConnectionPtr& conn = meta->conn();
-    InetAddress server_addr(addr.toIp(), meta->dst_port());
+    const muduo::net::TcpConnectionPtr& conn = meta->conn();
+    muduo::net::InetAddress server_addr(addr.toIp(), meta->dst_port());
     TunnelPtr tunnel(new Tunnel(conn->getLoop(), server_addr, meta, encryptor));
     tunnel->setup();
     tunnel->connect();
@@ -65,7 +61,7 @@ class TCPRelayServer : boost::noncopyable {
   }
 
  private:
-  void onServerConnection(const TcpConnectionPtr& conn) {
+  void onServerConnection(const muduo::net::TcpConnectionPtr& conn) {
     LOG_DEBUG << conn->name() << (conn->connected() ? " UP" : " DOWN");
     if (conn->connected()) {
       conn->setTcpNoDelay(true);
@@ -83,25 +79,25 @@ class TCPRelayServer : boost::noncopyable {
     }
   }
 
-  void onServerMessage(const TcpConnectionPtr& conn, Buffer* buf, Timestamp) {
-    std::map<string, ServerConnMetaPtr>::iterator it =
+  void onServerMessage(const muduo::net::TcpConnectionPtr& conn, muduo::net::Buffer* buf, muduo::Timestamp) {
+    std::map<muduo::string, ServerConnMetaPtr>::iterator it =
         LocalMetaList::instance().find(conn->name());
 
     if (it == LocalMetaList::instance().end()) {
-      size_t cipher_key_len = crypto::GetCipherKeyLength(FLAGS_cipher_name);
-      if (buf->readableBytes() < cipher_key_len) {
+      size_t cipher_iv_len = crypto::GetCipherIvLength(FLAGS_cipher_name);
+      if (buf->readableBytes() < cipher_iv_len) {
         return;
       }
 
-      std::string iv(buf->peek(), cipher_key_len);
+      std::string iv(buf->peek(), cipher_iv_len);
 
-      EncryptorPtr decryptor(new Encryptor);
+      crypto::EncryptorPtr decryptor(new crypto::Encryptor);
       assert(decryptor->Init(FLAGS_cipher_name, FLAGS_passwd, iv, false));
 
       ServerConnMetaPtr meta(new ServerConnMeta(conn, decryptor));
       if (!meta->Decrypt(
-              buf->peek() + cipher_key_len,
-              static_cast<int>(buf->readableBytes() - cipher_key_len))) {
+              buf->peek() + cipher_iv_len,
+              static_cast<int>(buf->readableBytes() - cipher_iv_len))) {
         conn->shutdown();
         return;
       }
@@ -128,14 +124,14 @@ class TCPRelayServer : boost::noncopyable {
 
       buf->retrieveAll();
       if (!conn->getContext().empty()) {
-        const TcpConnectionPtr& clientConn =
-            boost::any_cast<const TcpConnectionPtr&>(conn->getContext());
+        const muduo::net::TcpConnectionPtr& clientConn =
+            boost::any_cast<const muduo::net::TcpConnectionPtr&>(conn->getContext());
         clientConn->send(meta->mutable_buf());
       }
     }
   }
 
-  void threadInit(EventLoop* loop) {
+  void threadInit(muduo::net::EventLoop* loop) {
     assert(LocalMetaList::pointer() == NULL);
     assert(LocalResolver::pointer() == NULL);
 
@@ -145,21 +141,21 @@ class TCPRelayServer : boost::noncopyable {
     assert(LocalMetaList::pointer() != NULL);
     assert(LocalResolver::pointer() != NULL);
     LocalResolver::instance().reset(
-        new Resolver(loop, cdns::Resolver::kDNSandHostsFile));
+        new cdns::Resolver(loop, cdns::Resolver::kDNSandHostsFile));
   }
 
-  typedef ThreadLocalSingleton<MetaList> LocalMetaList;
-  typedef ThreadLocalSingleton<ResolverPtr> LocalResolver;
-  typedef ThreadLocalSingleton<TunnelList> LocalTunnelList;
+  typedef muduo::ThreadLocalSingleton<MetaList> LocalMetaList;
+  typedef muduo::ThreadLocalSingleton<ResolverPtr> LocalResolver;
+  typedef muduo::ThreadLocalSingleton<TunnelList> LocalTunnelList;
 
-  TcpServer server_;
+  muduo::net::TcpServer server_;
 };
 
 int main(int argc, char* argv[]) {
 
   google::ParseCommandLineFlags(&argc, &argv, true);
 
-  g_logLevel = Logger::INFO;
+  muduo::g_logLevel = muduo::Logger::INFO;
 
   LOG_INFO << "FLAGS_port: " << FLAGS_port
            << ", FLAGS_thread_num: " << FLAGS_thread_num
@@ -168,9 +164,9 @@ int main(int argc, char* argv[]) {
 
   assert(crypto::SupportedCipher(FLAGS_cipher_name));
 
-  InetAddress listenAddr(static_cast<uint16_t>(FLAGS_port));
+  muduo::net::InetAddress listenAddr(static_cast<uint16_t>(FLAGS_port));
 
-  EventLoop loop;
+  muduo::net::EventLoop loop;
   TCPRelayServer server(&loop, listenAddr);
   server.setThreadNum(FLAGS_thread_num);
 

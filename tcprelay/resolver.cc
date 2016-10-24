@@ -1,4 +1,4 @@
-#include <examples/cdns/Resolver.h>
+#include "resolver.h"
 
 #include <muduo/base/Logging.h>
 #include <muduo/net/Channel.h>

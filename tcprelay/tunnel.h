@@ -1,5 +1,5 @@
-#ifndef SOCKSV5_TUNNEL_H
-#define SOCKSV5_TUNNEL_H
+#ifndef TCPRELAY_TUNNEL_H_
+#define TCPRELAY_TUNNEL_H_
 
 #include <muduo/base/Logging.h>
 #include <muduo/net/EventLoop.h>
@@ -13,17 +13,6 @@
 #include "encryptor_openssl.h"
 
 #include "utils/string_utils.h"
-
-using namespace muduo;
-using namespace muduo::net;
-using namespace crypto;
-using namespace cdns;
-
-void LogHex(const std::string& msg, const muduo::StringPiece& sp) {
-  LOG_INFO << msg;
-  LOG_INFO << "size: " << sp.size() << ", text: " << utils::HexDump(sp);
-  LOG_INFO << msg;
-}
 
 class ServerConnMeta : boost::noncopyable {
  public:
@@ -39,8 +28,8 @@ class ServerConnMeta : boost::noncopyable {
 
   enum AddrType { ADDR_TYPE_IPV4 = 1, ADDR_TYPE_HOST = 3, ADDR_TYPE_IPV6 = 4 };
 
-  ServerConnMeta(const TcpConnectionPtr& conn_ptr,
-                 const EncryptorPtr& decryptor_ptr)
+  ServerConnMeta(const muduo::net::TcpConnectionPtr& conn_ptr,
+                 const crypto::EncryptorPtr& decryptor_ptr)
       : conn_(conn_ptr),
         decryptor_(decryptor_ptr),
         state_(STATE_REQ_ADDR_TYPE) {}
@@ -55,8 +44,8 @@ class ServerConnMeta : boost::noncopyable {
     return decryptor_->Update(data, len, &buf_);
   }
 
-  const TcpConnectionPtr& conn() const { return conn_; }
-  const EncryptorPtr& decryptor() const { return decryptor_; }
+  const muduo::net::TcpConnectionPtr& conn() const { return conn_; }
+  const crypto::EncryptorPtr& decryptor() const { return decryptor_; }
 
   const BufferType* buf() const { return &buf_; }
   BufferType* mutable_buf() { return &buf_; }
@@ -64,8 +53,8 @@ class ServerConnMeta : boost::noncopyable {
   ReqState state() { return state_; }
   void set_state(ReqState val) { state_ = val; }
 
-  const string& dst_hostname() { return dst_hostname_; }
-  void set_dst_hostname(const string& val) { dst_hostname_ = val; }
+  const muduo::string& dst_hostname() { return dst_hostname_; }
+  void set_dst_hostname(const muduo::string& val) { dst_hostname_ = val; }
 
   uint8_t dst_addr_len() { return dst_addr_len_; }
   void set_dst_addr_len(uint8_t val) { dst_addr_len_ = val; }
@@ -100,7 +89,7 @@ class ServerConnMeta : boost::noncopyable {
 
         case STATE_REQ_DST_ADDR: {
           uint8_t addr_len = this->dst_addr_len();
-          string dst_hostname_val(buf_.retrieveAsString(addr_len));
+          muduo::string dst_hostname_val(buf_.retrieveAsString(addr_len));
           this->set_dst_hostname(dst_hostname_val);
           this->set_state(STATE_REQ_DST_PORT);
           need_bytes = sizeof(uint16_t);
@@ -122,13 +111,13 @@ class ServerConnMeta : boost::noncopyable {
   }
 
  private:
-  const TcpConnectionPtr conn_;
-  const EncryptorPtr decryptor_;
+  const muduo::net::TcpConnectionPtr conn_;
+  const crypto::EncryptorPtr decryptor_;
 
   ReqState state_;
   BufferType buf_;
 
-  string dst_hostname_;
+  muduo::string dst_hostname_;
   uint8_t dst_addr_len_;
   uint16_t dst_port_;
 };
