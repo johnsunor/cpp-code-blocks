@@ -11,7 +11,7 @@
 
 #include <gflags/gflags.h>
 
-#include "Resolver.h"
+#include "resolver.h"
 #include "encryptor_openssl.h"
 #include "tunnel.h"
 #include "utils/string_utils.h"
