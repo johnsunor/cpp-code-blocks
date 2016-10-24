@@ -35,7 +35,7 @@ bool SupportedCipher(const muduo::StringPiece& cipher_name) {
   return false;
 }
 
-size_t GetCipherKeyLength(const muduo::StringPiece& cipher_name) {
+size_t GetCipherIvLength(const muduo::StringPiece& cipher_name) {
   EnsureOpenSSLInit();
 
   const EVP_CIPHER* cipher = EVP_get_cipherbyname(cipher_name.data());
@@ -43,7 +43,7 @@ size_t GetCipherKeyLength(const muduo::StringPiece& cipher_name) {
     return 0;
   }
 
-  return EVP_CIPHER_key_length(cipher);
+  return EVP_CIPHER_iv_length(cipher);
 }
 
 Encryptor::Encryptor() {

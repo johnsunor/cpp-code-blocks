@@ -26,7 +26,7 @@ namespace crypto {
 
 bool SupportedCipher(const muduo::StringPiece& cipher_name);
 
-size_t GetCipherKeyLength(const muduo::StringPiece& cipher_name);
+size_t GetCipherIvLength(const muduo::StringPiece& cipher_name);
 
 namespace {
 
