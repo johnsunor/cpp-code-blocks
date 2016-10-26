@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package aiproto;
+
+enum MoveType {
+  UP = 0;
+  RIGHT = 1;
+  DOWN = 2;
+  LEFT = 3;
+}
+
+message CSAI2048Tile {
+  repeated int32 data = 1;
+  bool is_over = 2;
+}
+
+message SCAI2048Move {
+  MoveType type = 1;
+}
+
