@@ -38,7 +38,6 @@ set(muduo_LINK_DIR /home/johnsun/software/build/release/lib/)
 set(CMAKE_CXX_COMPILER "g++")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -finline-limit=1000 -DNDEBUG")
-#set(EXECUTABLE_OUTPUT_PATH bin)
 
 find_package(Boost REQUIRED)
 find_package(Protobuf)
@@ -54,37 +53,46 @@ endif()
 
 include_directories(
     ${muduo_INCLUDE_DIR}
+    ./gens/
     )
 
 link_directories(
     ${muduo_LINK_DIR}
+    /usr/local/lib/
     )
 
 add_library(protobuf_codec codec.cc)
 target_link_libraries(protobuf_codec protobuf muduo_base muduo_net z pthread)
 
-add_custom_command(OUTPUT ai_2048.pb.cc ai_2048.pb.h
-  COMMAND protoc
-  ARGS --cpp_out . ${CMAKE_CURRENT_SOURCE_DIR}/ai_2048.proto -I${CMAKE_CURRENT_SOURCE_DIR}
-  DEPENDS ai_2048.proto
-  VERBATIM )
+FILE(GLOB proto_files ${CMAKE_CURRENT_SOURCE_DIR}/proto/*.proto)  
+FOREACH(proto_file ${proto_files})
+  STRING(REGEX REPLACE "[^/]proto" "" proto_file_name ${proto_file})
+  STRING(REGEX REPLACE "/proto/" "/gens/" proto_file_name ${proto_file_name})
+  LIST(APPEND PROTO_SRCS "${proto_file_name}.pb.cc")
+	set_source_files_properties("${proto_file_name}.pb.cc"
+		PROPERTIES COMPILE_FLAGS "-Wno-conversion -Wno-shadow")
 
-set_source_files_properties(ai_2048.pb.cc PROPERTIES COMPILE_FLAGS "-Wno-conversion -Wno-shadow")
-
-add_library(ai_2048_proto ai_2048.pb.cc)
-target_link_libraries(ai_2048_proto protobuf pthread)
+	ADD_CUSTOM_COMMAND(
+		OUTPUT "${proto_file_name}.pb.h" "${proto_file_name}.pb.cc"
+		COMMAND protoc --proto_path=${CMAKE_CURRENT_SOURCE_DIR}/proto/
+                       --cpp_out=${CMAKE_CURRENT_SOURCE_DIR}/gens/ ${proto_file} 
+		DEPENDS ${proto_file}
+	)
+ENDFOREACH(proto_file)
+message(STATUS ${PROTO_SRCS})
 
 add_library(ai_2048 ai_2048.cc)
 
-add_executable(ai_2048_server server.cc)
+add_executable(ai_2048_server server.cc ai_2048.cc ${PROTO_SRCS})
 set_target_properties(ai_2048_server PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
-target_link_libraries(ai_2048_server protobuf_codec ai_2048_proto ai_2048)
+target_link_libraries(ai_2048_server protobuf_codec ai_2048)
 
-add_executable(ai_2048_client client.cc)
+add_executable(ai_2048_client client.cc ai_2048.cc ${PROTO_SRCS})
 set_target_properties(ai_2048_client PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
-target_link_libraries(ai_2048_client protobuf_codec ai_2048_proto ai_2048)
+target_link_libraries(ai_2048_client protobuf_codec ai_2048)
 
 add_custom_target(protobuf_codec_all
                   DEPENDS
                   ai_2048_server
                   ai_2048_client)
+
