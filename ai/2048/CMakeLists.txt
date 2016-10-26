@@ -53,7 +53,7 @@ endif()
 
 include_directories(
     ${muduo_INCLUDE_DIR}
-    ./gens/
+    ${CMAKE_CURRENT_SOURCE_DIR}/gens/
     )
 
 link_directories(
@@ -91,7 +91,7 @@ add_executable(ai_2048_client client.cc ai_2048.cc ${PROTO_SRCS})
 set_target_properties(ai_2048_client PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
 target_link_libraries(ai_2048_client protobuf_codec ai_2048)
 
-add_custom_target(protobuf_codec_all
+add_custom_target(ai_2048_all
                   DEPENDS
                   ai_2048_server
                   ai_2048_client)
