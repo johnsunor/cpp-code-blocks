@@ -39,6 +39,9 @@ set(CMAKE_CXX_COMPILER "g++")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -finline-limit=1000 -DNDEBUG")
 
+set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
+set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)
+
 find_package(Boost REQUIRED)
 find_package(Protobuf)
 find_path(TCMALLOC_INCLUDE_DIR google/heap-profiler.h)
@@ -85,11 +88,11 @@ add_library(ai_2048 ai_2048.cc)
 
 add_executable(ai_2048_server server.cc ai_2048.cc ${PROTO_SRCS})
 set_target_properties(ai_2048_server PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
-target_link_libraries(ai_2048_server protobuf_codec ai_2048)
+target_link_libraries(ai_2048_server protobuf_codec ai_2048 tcmalloc)
 
 add_executable(ai_2048_client client.cc ai_2048.cc ${PROTO_SRCS})
 set_target_properties(ai_2048_client PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
-target_link_libraries(ai_2048_client protobuf_codec ai_2048)
+target_link_libraries(ai_2048_client protobuf_codec ai_2048 tcmalloc)
 
 add_custom_target(ai_2048_all
                   DEPENDS
