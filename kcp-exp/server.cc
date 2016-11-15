@@ -126,7 +126,6 @@ void TryUpdateKCPCB(EventLoop* loop, const std::string& addr_str) {
       LOG_INFO << "dead link with addr_str: " << addr_str;
     }
   } else {
-    assert(false);
     LOG_INFO << "add timer for kcp session, session_id: " << kcpcb->conv;
 
     Timestamp time(now_micro_s + (ts - now) * 1000);
@@ -180,9 +179,9 @@ void ServerReadCallback(EventLoop* loop, int sockfd,
       return;
     }
 
-    SockAddr* addr = new SockAddr(sockfd, addr_len, peer_addr);
+    boost::scoped_ptr<SockAddr> addr(new SockAddr(sockfd, addr_len, peer_addr));
 
-    IKCPCB* kcpcb = ikcp_create(session_id, addr);
+    IKCPCB* kcpcb = ikcp_create(session_id, addr.get());
     if (!SetupFastMode(kcpcb)) {
       ikcp_release(kcpcb);
       ReleaseSessionId(session_id);
