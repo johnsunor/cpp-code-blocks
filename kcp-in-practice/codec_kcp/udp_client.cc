@@ -1,0 +1,121 @@
+
+#include "udp_client.h"
+
+#include <muduo/base/Logging.h>
+
+void UDPClient::Start() {
+  assert(socket_.sockfd() != kInvalidSocket);
+  assert(!channel_.get());
+
+  channel_.reset(new muduo::net::Channel(loop_, socket_.sockfd()));
+  channel_->setReadCallback(boost::bind(&UDPClient::HandleRead, this, _1));
+  channel_->setWriteCallback(boost::bind(&UDPClient::HandleWrite, this));
+  channel_->setErrorCallback(boost::bind(&UDPClient::HandleError, this));
+  channel_->enableReading();
+}
+
+void UDPClient::HandleRead(muduo::Timestamp receive_time) {
+  assert(socket_.sockfd() != kInvalidSocket);
+  assert(read_buf_.writableBytes() > 0);
+
+  muduo::net::InetAddress address;
+  int bytes_transferred = socket_.RecvFrom(read_buf_.beginWrite(),
+                                           read_buf_.writableBytes(), &address);
+  if (bytes_transferred > 0) {
+    read_buf_.hasWritten(bytes_transferred);
+    if (message_callback_) {
+      message_callback_(&read_buf_, receive_time, address);
+    }
+
+    read_buf_.retrieveAll();
+  } else if (bytes_transferred < 0) {
+    errno = bytes_transferred;
+    LOG_SYSERR << "UDPClient::handleRead";
+    HandleError();
+  }
+}
+
+int UDPClient::Write(const void* buf, size_t len) {
+  int bytes_transferred = socket_.Write(buf, len);
+  if (bytes_transferred < 0) {
+    if (bytes_transferred == EAGAIN || bytes_transferred == EWOULDBLOCK) {
+      SetWriteBlocked();
+    }
+
+    errno = bytes_transferred;
+    LOG_SYSERR << "UDPClient::SendTo";
+
+    HandleError();
+  }
+
+  return bytes_transferred;
+}
+
+int UDPClient::Write(muduo::net::Buffer* buf) {
+  int bytes_transferred = socket_.Write(buf->peek(), buf->readableBytes());
+  if (bytes_transferred >= 0) {
+    buf->retrieve(bytes_transferred);
+  } else {
+    errno = bytes_transferred;
+    LOG_SYSERR << "UDPClient::SendTo";
+
+    HandleError();
+  }
+
+  return bytes_transferred;
+}
+
+int UDPClient::WriteOrQueuePcket(const void* buf, size_t len) {
+  assert(socket_.sockfd() != kInvalidSocket);
+
+  if (len > max_packet_size_) {
+    LOG_ERROR << "UDPClient: write packet size too long";
+    return -1;
+  }
+
+  if (IsWriteBlocked()) {
+    queued_packets_.push_back(new QueuedPacket(buf, len));
+    return 0;
+  }
+
+  int bytes_transferred = socket_.Write(buf, len);
+  if (bytes_transferred >= 0) {
+    return bytes_transferred;
+  }
+
+  if (bytes_transferred < 0) {
+    if (bytes_transferred == EAGAIN || bytes_transferred == EWOULDBLOCK) {
+      SetWriteBlocked();
+      channel_->enableWriting();
+      queued_packets_.push_back(new QueuedPacket(buf, len));
+    }
+
+    errno = bytes_transferred;
+    LOG_SYSERR << "UDPClient::SendTo";
+
+    HandleError();
+  }
+
+  return bytes_transferred;
+}
+
+void UDPClient::HandleWrite() {
+  SetWritable();
+
+  boost::ptr_list<QueuedPacket>::iterator packet_iterator =
+      queued_packets_.begin();
+  while (!IsWriteBlocked() && packet_iterator != queued_packets_.end()) {
+    if (Write(packet_iterator->data, packet_iterator->size) >= 0) {
+      queued_packets_.erase(packet_iterator);
+    } else {
+      ++packet_iterator;
+    }
+  }
+}
+
+void UDPClient::HandleError() {
+  int err = muduo::net::sockets::getSocketError(channel_->fd());
+  LOG_ERROR << "UDPClient::HandleError [fd:" << socket_.sockfd()
+            << "] - SO_ERROR = " << err << " " << muduo::strerror_tl(err);
+}
+
