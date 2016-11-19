@@ -14,8 +14,8 @@
 
 class UDPClient : boost::noncopyable {
  public:
-  typedef boost::function<void(muduo::net::Buffer*, muduo::Timestamp,
-                               const muduo::net::InetAddress)> MessageCallback;
+  typedef boost::function<void(muduo::net::Buffer*, muduo::Timestamp)>
+      MessageCallback;
 
   explicit UDPClient(muduo::net::EventLoop* loop)
       : loop_(CHECK_NOTNULL(loop)),
@@ -23,9 +23,7 @@ class UDPClient : boost::noncopyable {
         read_buf_(kDefaultMaxPacketSize),
         write_blocked_(false) {}
 
-  int Connect(const muduo::net::InetAddress& address) {
-    return socket_.Connect(address);
-  }
+  int Connect(const muduo::net::InetAddress& address);
 
   void Close() { socket_.Close(); }
 
@@ -85,7 +83,7 @@ class UDPClient : boost::noncopyable {
  private:
   muduo::net::EventLoop* const loop_;
 
-  // server side socket
+  // client side socket
   UDPSocket socket_;
   boost::scoped_ptr<muduo::net::Channel> channel_;
 
@@ -98,4 +96,3 @@ class UDPClient : boost::noncopyable {
 
   boost::ptr_list<QueuedPacket> queued_packets_;
 };
-

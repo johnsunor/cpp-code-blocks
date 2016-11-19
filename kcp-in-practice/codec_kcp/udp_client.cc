@@ -14,17 +14,29 @@ void UDPClient::Start() {
   channel_->enableReading();
 }
 
+int UDPClient::Connect(const muduo::net::InetAddress& address) {
+  assert(!socket_.is_connected());
+
+  int result = socket_.Connect(address);
+  if (result < 0) {
+    LOG_SYSERR << "UDPClient::Connect - connect to " << address.toIpPort()
+               << " failed, "
+               << " error = " << muduo::strerror_tl(result);
+  }
+
+  return result;
+}
+
 void UDPClient::HandleRead(muduo::Timestamp receive_time) {
   assert(socket_.sockfd() != kInvalidSocket);
   assert(read_buf_.writableBytes() > 0);
 
-  muduo::net::InetAddress address;
-  int bytes_transferred = socket_.RecvFrom(read_buf_.beginWrite(),
-                                           read_buf_.writableBytes(), &address);
+  int bytes_transferred =
+      socket_.Read(read_buf_.beginWrite(), read_buf_.writableBytes());
   if (bytes_transferred > 0) {
     read_buf_.hasWritten(bytes_transferred);
     if (message_callback_) {
-      message_callback_(&read_buf_, receive_time, address);
+      message_callback_(&read_buf_, receive_time);
     }
 
     read_buf_.retrieveAll();
@@ -118,4 +130,3 @@ void UDPClient::HandleError() {
   LOG_ERROR << "UDPClient::HandleError [fd:" << socket_.sockfd()
             << "] - SO_ERROR = " << err << " " << muduo::strerror_tl(err);
 }
-

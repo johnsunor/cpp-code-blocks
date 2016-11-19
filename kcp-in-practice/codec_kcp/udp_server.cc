@@ -37,6 +37,8 @@ void UDPServer::HandleRead(muduo::Timestamp receive_time) {
 
 int UDPServer::SendTo(const void* buf, size_t len,
                       const muduo::net::InetAddress& address) {
+  assert(!IsWriteBlocked());
+
   int bytes_transferred = socket_.SendTo(buf, len, address);
   if (bytes_transferred < 0) {
     if (bytes_transferred == EAGAIN || bytes_transferred == EWOULDBLOCK) {
@@ -116,6 +118,10 @@ void UDPServer::HandleWrite() {
     } else {
       ++packet_iterator;
     }
+  }
+
+  if (queued_packets_.empty()) {
+    channel_->disableWriting();
   }
 }
 

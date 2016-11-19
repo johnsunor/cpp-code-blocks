@@ -42,7 +42,7 @@ int main(int argc, char* argv[]) {
   }
 
   EventLoop loop;
-  InetAddress address("127.0.0.1", ::atoi(argv[1]));
+  InetAddress address(::atoi(argv[1]));
   TestServer server(&loop, address);
 
   LOG_INFO << "server listen on: " << address.toIpPort();

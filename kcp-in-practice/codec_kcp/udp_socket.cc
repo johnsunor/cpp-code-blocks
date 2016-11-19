@@ -3,7 +3,7 @@
 
 UDPSocket::UDPSocket()
     : sockfd_(kInvalidSocket),
-      addr_family_(0),
+      addr_family_(AF_UNSPEC),
       socket_options_(SOCKET_OPTION_MULTICAST_LOOP) {}
 
 int UDPSocket::Connect(const muduo::net::InetAddress& address) {
@@ -19,13 +19,14 @@ int UDPSocket::Connect(const muduo::net::InetAddress& address) {
   SockaddrStorage storage;
   if (!SockaddrStorage::ToSockAddr(address, &storage)) {
     Close();
-    return -1;  // EFAULT;;
+    return EADDRNOTAVAIL;  // EFAULT;;
   }
 
   rv = HANDLE_EINTR(::connect(sockfd_, storage.addr, storage.addr_len));
   if (rv < 0) {
+    int last_error = errno;
     Close();
-    return rv;
+    return last_error;
   }
 
   remote_address_.reset(new muduo::net::InetAddress(address));
@@ -334,5 +335,57 @@ void UDPSocket::Close() {
   }
 
   sockfd_ = kInvalidSocket;
-  addr_family_ = 0;
+  addr_family_ = AF_UNSPEC;
 }
+
+int UDPSocket::GetLocalAddress(muduo::net::InetAddress* address) const {
+  assert(address != NULL);
+
+  if (!is_connected()) {
+    return ENOTCONN;
+  }
+
+  if (!local_address_.get()) {
+    SockaddrStorage storage;
+    if (getsockname(sockfd_, storage.addr, &storage.addr_len) < 0) {
+      return errno;
+    }
+
+    boost::scoped_ptr<muduo::net::InetAddress> inet_addr(
+        new muduo::net::InetAddress);
+    if (SockaddrStorage::ToInetAddr(storage, inet_addr.get())) {
+      return EADDRNOTAVAIL;
+    }
+    local_address_.swap(inet_addr);
+  }
+
+  *address = *local_address_;
+  return 0;
+}
+
+int UDPSocket::GetPeerAddress(muduo::net::InetAddress* address) const {
+  assert(address != NULL);
+
+  if (!is_connected()) {
+    return ENOTCONN;
+  }
+
+  if (!remote_address_.get()) {
+    SockaddrStorage storage;
+    if (getpeername(sockfd_, storage.addr, &storage.addr_len) < 0) {
+      return errno;
+    }
+
+    boost::scoped_ptr<muduo::net::InetAddress> inet_addr(
+        new muduo::net::InetAddress);
+    if (SockaddrStorage::ToInetAddr(storage, inet_addr.get())) {
+      return EADDRNOTAVAIL;
+    }
+
+    remote_address_.swap(inet_addr);
+  }
+
+  *address = *remote_address_;
+  return 0;
+}
+
