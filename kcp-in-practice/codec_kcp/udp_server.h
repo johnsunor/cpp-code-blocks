@@ -17,12 +17,19 @@ class UDPServer : boost::noncopyable {
   typedef boost::function<void(muduo::net::Buffer*, muduo::Timestamp,
                                const muduo::net::InetAddress&)> MessageCallback;
 
-
   explicit UDPServer(muduo::net::EventLoop* loop)
       : loop_(CHECK_NOTNULL(loop)),
         max_packet_size_(kDefaultMaxPacketSize),
         read_buf_(kDefaultMaxPacketSize),
         write_blocked_(false) {}
+
+  UDPServer(muduo::net::EventLoop* loop, muduo::net::InetAddress listen_addr)
+      : loop_(CHECK_NOTNULL(loop)),
+        max_packet_size_(kDefaultMaxPacketSize),
+        read_buf_(kDefaultMaxPacketSize),
+        write_blocked_(false) {
+    ListenOrDie(listen_addr);
+  }
 
   int Listen(const muduo::net::InetAddress& address) {
     return socket_.Bind(address);

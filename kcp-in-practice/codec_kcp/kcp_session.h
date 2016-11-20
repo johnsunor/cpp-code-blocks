@@ -1,44 +1,23 @@
 
-#include <map>
 #include <queue>
 
+#include <boost/any.hpp>
 #include <boost/bind.hpp>
-#include <boost/unordered_map.hpp>
-
-#include <muduo/base/Logging.h>
-#include <muduo/net/Channel.h>
-#include <muduo/net/EventLoop.h>
-#include <muduo/net/Socket.h>
-#include <muduo/net/SocketsOps.h>
-#include <muduo/net/TcpClient.h>
-#include <muduo/net/TcpServer.h>
-
-#include "ikcp.h"
-#include "string_utils.h"
-
-using namespace muduo;
-using namespace muduo::net;
-
-const double kClientInterval = 1;
-
-const int kFrameLen = sizeof(int64_t) * 2;
-
-boost::unordered_map<std::string, IKCPCB*> kcpcbs;
-boost::unordered_map<std::string, TimerId> timer_ids;
-int CreateNonblockingUDPOrDie() {
-  int sockfd =
-      ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_UDP);
-  if (sockfd < 0) {
-    LOG_SYSFATAL << "::socket";
-  }
-  return sockfd;
-}
+#include <boost/enable_shared_from_this.hpp>
+#include <boost/noncopyable.hpp>
+#include <boost/function.hpp>
+#include <boost/scoped_ptr.hpp>
+#include <boost/shared_ptr.hpp>
 
 #include <muduo/base/Logging.h>
 #include <muduo/base/Singleton.h>
+#include <muduo/net/Buffer.h>
+
+#include "common/macros.h"
+
+#include "ikcp.h"
 
 const int kInvalidSessionId = 0;
-
 const int kMaxSessionId = 100000;
 
 class KCPSessionIdInitSingleton : boost::noncopyable {
@@ -53,7 +32,6 @@ class KCPSessionIdInitSingleton : boost::noncopyable {
       vi.push_back(i);
     }
 
-    // shuffle
     ::srand(::time(NULL));
     size_t len = vi.size();
     while (len > 0) {
@@ -105,45 +83,64 @@ struct ScopedKCPSession {
 
 typedef boost::scoped_ptr<ScopedKCPSession> ScopedKCPSessionPtr;
 
-// Convenience struct for when you need a |struct sockaddr|.
-struct SockaddrStorage {
-  SockaddrStorage()
-      : addr_len(sizeof(addr_storage)),
-        addr(reinterpret_cast<struct sockaddr*>(&addr_storage)) {}
-  SockaddrStorage(const SockaddrStorage& other);
-  void operator=(const SockaddrStorage& other);
+class KCPSession;
+typedef boost::shared_ptr<KCPSession> KCPSessionPtr;
 
-  struct sockaddr_storage addr_storage;
-  socklen_t addr_len;
-  struct sockaddr* const addr;
-};
-
-class KCPSession {
+class KCPSession : boost::noncopyable,
+                   public boost::enable_shared_from_this<KCPSession> {
  public:
-  KCPSession() : session_id_(kInvalidSessionId) {}
-  ~KCPSession() {}
+  typedef boost::function<void(const KCPSessionPtr&, muduo::net::Buffer*)>
+      MessageCallback;
+
+  typedef boost::function<void(const KCPSessionPtr&, muduo::net::Buffer*)>
+      OutputCallback;
+
+  struct ALIGNAS(1) MetaData {
+    enum { SYN, ACK, PSH, PING };
+    uint8_t kind;
+    int session_id;
+  };
 
   struct Params {
-    Params();
-    ~Params();
-
     int nodelay;
     int interval;
     int resend;
     int nocongestion;
   };
 
+  KCPSession();
   bool Init(int session_id, const Params& params);
+
+  void Feed(const char* buf, size_t len);
 
   int session_id() const { return session_id_; }
 
+  void set_message_callback(const MessageCallback& cb) {
+    message_callback_ = cb;
+  }
+
+  void set_output_callback(const OutputCallback& cb) { output_callback_ = cb; }
+
   const boost::any& context() const { return context_; }
   void set_context(const boost::any& context) { context_ = context; }
+
+  void Output(const char* buf, size_t len);
+
+  static int kcp_output_callback(const char* buf, int len, IKCPCB* kcp,
+                                 void* user);
 
  private:
   int session_id_;
   ScopedKCPSessionPtr kcp_;
 
+  MessageCallback message_callback_;
+  OutputCallback output_callback_;
+
+  muduo::net::Buffer input_buf_;
+  muduo::net::Buffer output_buf_;
+
   boost::any context_;
 };
 
+const KCPSession::Params kFastModeKCPParams = {1, 10, 2, 1};
+const KCPSession::Params kNormalModeKCPParams = {0, 100, 0, 0};
