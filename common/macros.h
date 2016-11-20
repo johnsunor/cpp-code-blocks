@@ -40,5 +40,11 @@ char (&ArraySizeHelper(T (&array)[N]))[N];
   eintr_wrapper_result; \
 })
 
+#define ALIGNOF(type) __alignof__(type)
+
+#define ALIGNAS(byte_alignment) __attribute__((aligned(byte_alignment)))
+
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+
 #endif
 

@@ -9,7 +9,7 @@
 
 #include <muduo/base/StringPiece.h>
 
-namespace utils {
+namespace common {
 
 inline char* StringAsArray(std::string* str) {
   return (str == NULL || str->empty()) ? NULL : &((*str)[0]);

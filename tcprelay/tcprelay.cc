@@ -21,14 +21,14 @@ DEFINE_string(passwd, "aes256cfb", "cipher_passwd for you wanted to use");
 DEFINE_int32(port, 3389, "server port for you wanted to use");
 DEFINE_int32(thread_num, 1, "server thread num for you wanted to use");
 
-
 class TCPRelayServer : boost::noncopyable {
  public:
   typedef std::map<muduo::string, ServerConnMetaPtr> MetaList;
   typedef std::map<muduo::string, TunnelPtr> TunnelList;
   typedef boost::shared_ptr<cdns::Resolver> ResolverPtr;
 
-  TCPRelayServer(muduo::net::EventLoop* loop, const muduo::net::InetAddress& listenAddr)
+  TCPRelayServer(muduo::net::EventLoop* loop,
+                 const muduo::net::InetAddress& listenAddr)
       : server_(loop, listenAddr, "TCPRelayServer") {
     server_.setConnectionCallback(
         boost::bind(&TCPRelayServer::onServerConnection, this, _1));
@@ -44,11 +44,12 @@ class TCPRelayServer : boost::noncopyable {
     server_.start();
   }
 
-  void resolveCallback(const ServerConnMetaPtr& meta, const muduo::net::InetAddress& addr) {
+  void resolveCallback(const ServerConnMetaPtr& meta,
+                       const muduo::net::InetAddress& addr) {
     const crypto::EncryptorPtr& decryptor = meta->decryptor();
     crypto::EncryptorPtr encryptor(new crypto::Encryptor);
     assert(encryptor->Init(decryptor->cipher_name(), decryptor->passwd(),
-                           decryptor->iv(), true)); // mix iv
+                           decryptor->iv(), true));  // mix iv
 
     const muduo::net::TcpConnectionPtr& conn = meta->conn();
     muduo::net::InetAddress server_addr(addr.toIp(), meta->dst_port());
@@ -79,7 +80,8 @@ class TCPRelayServer : boost::noncopyable {
     }
   }
 
-  void onServerMessage(const muduo::net::TcpConnectionPtr& conn, muduo::net::Buffer* buf, muduo::Timestamp) {
+  void onServerMessage(const muduo::net::TcpConnectionPtr& conn,
+                       muduo::net::Buffer* buf, muduo::Timestamp) {
     std::map<muduo::string, ServerConnMetaPtr>::iterator it =
         LocalMetaList::instance().find(conn->name());
 
@@ -125,7 +127,8 @@ class TCPRelayServer : boost::noncopyable {
       buf->retrieveAll();
       if (!conn->getContext().empty()) {
         const muduo::net::TcpConnectionPtr& clientConn =
-            boost::any_cast<const muduo::net::TcpConnectionPtr&>(conn->getContext());
+            boost::any_cast<const muduo::net::TcpConnectionPtr&>(
+                conn->getContext());
         clientConn->send(meta->mutable_buf());
       }
     }
@@ -152,7 +155,6 @@ class TCPRelayServer : boost::noncopyable {
 };
 
 int main(int argc, char* argv[]) {
-
   google::ParseCommandLineFlags(&argc, &argv, true);
 
   muduo::g_logLevel = muduo::Logger::INFO;
