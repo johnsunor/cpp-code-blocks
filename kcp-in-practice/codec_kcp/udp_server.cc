@@ -71,7 +71,7 @@ int UDPServer::SendTo(muduo::net::Buffer* buf,
 }
 
 void UDPServer::SendOrQueuePacket(const void* buf, size_t len,
-                                const muduo::net::InetAddress& address) {
+                                  const muduo::net::InetAddress& address) {
   assert(len > 0);
   assert(socket_.sockfd() != kInvalidSocket);
 

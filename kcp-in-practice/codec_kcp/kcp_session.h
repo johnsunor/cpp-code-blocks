@@ -104,6 +104,8 @@ class KCPSession : boost::noncopyable,
   };
 
   struct Params {
+    int snd_wnd;
+    int rcv_wnd;
     int nodelay;
     int interval;
     int resend;
@@ -111,6 +113,7 @@ class KCPSession : boost::noncopyable,
   };
 
   KCPSession();
+  ~KCPSession();
 
   bool Init(int session_id, const Params& params);
 
@@ -157,5 +160,5 @@ class KCPSession : boost::noncopyable,
                                  void* user);
 };
 
-const KCPSession::Params kFastModeKCPParams = {1, 10, 2, 1};
-const KCPSession::Params kNormalModeKCPParams = {0, 100, 0, 0};
+const KCPSession::Params kFastModeKCPParams = {128, 128, 1, 10, 2, 1};
+const KCPSession::Params kNormalModeKCPParams = {32, 32, 0, 100, 0, 0};

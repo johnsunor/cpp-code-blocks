@@ -11,6 +11,10 @@
 
 KCPSession::KCPSession() : session_id_(kInvalidSessionId), kcp_(NULL) {}
 
+KCPSession::~KCPSession() {
+  LOG_INFO << "~KCPSession #session_id: " << session_id_;
+}
+
 bool KCPSession::Init(int session_id, const Params& params) {
   // int session_id =
   // KCPSessionIdInitSingleton::GetInstance().GetNextSessionId();
@@ -28,8 +32,13 @@ bool KCPSession::Init(int session_id, const Params& params) {
   ScopedKCPSessionPtr scoped_kcp(new ScopedKCPSession(kcp));
   ikcp_setoutput(kcp, KCPSession::kcp_output_callback);
 
-  int rv = ikcp_nodelay(kcp, params.nodelay, params.interval, params.resend,
-                        params.nocongestion);
+  int rv = ikcp_wndsize(kcp, params.snd_wnd, params.rcv_wnd);
+  if (rv < 0) {
+    return false;
+  }
+
+  rv = ikcp_nodelay(kcp, params.nodelay, params.interval, params.resend,
+                    params.nocongestion);
   if (rv < 0) {
     return false;
   }

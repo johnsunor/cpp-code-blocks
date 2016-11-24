@@ -16,7 +16,7 @@
 using namespace muduo;
 using namespace muduo::net;
 
-const double kServerUpdateSessionInterval = 0.005;  // 0.01s/10ms
+const double kServerUpdateSessionInterval = 0.01;  // 0.01s/10ms
 
 class TestServer {
  public:
@@ -108,7 +108,8 @@ class TestServer {
 
       conn->setContext(kcp_session);
     } else if (kind == KCPSession::MetaData::PSH) {
-      LOG_INFO << "UDP message recved time: " << receive_time.microSecondsSinceEpoch() / 1000;
+      LOG_INFO << "UDP message recved time: "
+               << receive_time.microSecondsSinceEpoch() / 1000;
 
       if (conn->getContext().empty()) {
         LOG_FATAL << "impossible - kcp_session not exists, client session id: "
