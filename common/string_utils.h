@@ -2,6 +2,8 @@
 #ifndef TCPRELAY_UTILS_STRING_UTILS_H_
 #define TCPRELAY_UTILS_STRING_UTILS_H_
 
+#include <cstdio>
+
 #include <iostream>
 #include <sstream>
 #include <string>
