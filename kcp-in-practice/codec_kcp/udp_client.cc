@@ -77,24 +77,15 @@ int UDPClient::Write(muduo::net::Buffer* buf) {
   return bytes_transferred;
 }
 
-int UDPClient::WriteOrQueuePcket(const void* buf, size_t len) {
+void UDPClient::WriteOrQueuePcket(const void* buf, size_t len) {
   assert(socket_.sockfd() != kInvalidSocket);
-
-  if (len > max_packet_size_) {
-    LOG_ERROR << "UDPClient: write packet size too long";
-    return -1;
-  }
 
   if (IsWriteBlocked()) {
     queued_packets_.push_back(new QueuedPacket(buf, len));
-    return 0;
+    return;
   }
 
   int bytes_transferred = socket_.Write(buf, len);
-  if (bytes_transferred >= 0) {
-    return bytes_transferred;
-  }
-
   if (bytes_transferred < 0) {
     if (bytes_transferred == EAGAIN || bytes_transferred == EWOULDBLOCK) {
       SetWriteBlocked();
@@ -107,8 +98,6 @@ int UDPClient::WriteOrQueuePcket(const void* buf, size_t len) {
 
     HandleError();
   }
-
-  return bytes_transferred;
 }
 
 void UDPClient::HandleWrite() {

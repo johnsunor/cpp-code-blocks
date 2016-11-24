@@ -70,26 +70,17 @@ int UDPServer::SendTo(muduo::net::Buffer* buf,
   return bytes_transferred;
 }
 
-int UDPServer::SendOrQueuePcket(const void* buf, size_t len,
+void UDPServer::SendOrQueuePacket(const void* buf, size_t len,
                                 const muduo::net::InetAddress& address) {
   assert(len > 0);
   assert(socket_.sockfd() != kInvalidSocket);
 
-  if (len > max_packet_size_) {
-    LOG_ERROR << "UDPServer: send packet size too long";
-    return -1;
-  }
-
   if (IsWriteBlocked()) {
     queued_packets_.push_back(new QueuedPacket(buf, len, address));
-    return 0;
+    return;
   }
 
   int bytes_transferred = socket_.SendTo(buf, len, address);
-  if (bytes_transferred >= 0) {
-    return bytes_transferred;
-  }
-
   if (bytes_transferred < 0) {
     if (bytes_transferred == EAGAIN || bytes_transferred == EWOULDBLOCK) {
       SetWriteBlocked();
@@ -102,8 +93,6 @@ int UDPServer::SendOrQueuePcket(const void* buf, size_t len,
 
     HandleError();
   }
-
-  return bytes_transferred;
 }
 
 void UDPServer::HandleWrite() {

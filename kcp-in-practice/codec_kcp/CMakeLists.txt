@@ -66,11 +66,11 @@ link_directories(
     ${muduo_LINK_DIR}
     )
 
-add_executable(client client_test.cc udp_client.cc udp_socket.cc)
+add_executable(client client.cc kcp_session.cc udp_client.cc udp_socket.cc ikcp.c)
 target_link_libraries(client muduo_net muduo_base z pthread)
 target_link_libraries(client tcmalloc gflags)
 
-add_executable(server server_test.cc udp_server.cc udp_socket.cc)
+add_executable(server server.cc kcp_session.cc udp_server.cc udp_socket.cc ikcp.c)
 target_link_libraries(server muduo_net muduo_base z pthread)
 target_link_libraries(server tcmalloc gflags)
 

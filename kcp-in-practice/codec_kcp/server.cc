@@ -1,7 +1,4 @@
 
-#include "udp_server.h"
-#include "kcp_session.h"
-
 #include <muduo/net/Channel.h>
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/Socket.h>
@@ -10,8 +7,16 @@
 #include <muduo/net/TcpServer.h>
 #include <muduo/net/InetAddress.h>
 
+#include "codec/codec.h"
+#include "codec/dispatcher.h"
+
+#include "udp_server.h"
+#include "kcp_session.h"
+
 using namespace muduo;
 using namespace muduo::net;
+
+const double kServerUpdateSessionInterval = 0.005;  // 0.01s/10ms
 
 class TestServer {
  public:
@@ -26,13 +31,21 @@ class TestServer {
 
     udp_server_.set_message_callback(
         boost::bind(&TestServer::OnUDPServerMessage, this, _1, _2, _3));
+
+    loop->runEvery(kServerUpdateSessionInterval,
+                   boost::bind(&TestServer::UpdateSession, this));
+  }
+
+  void Start() {
+    tcp_server_.start();
+    udp_server_.Start();
   }
 
   void OnUDPServerMessage(muduo::net::Buffer* buf,
-                          muduo::Timestamp receieve_time,
+                          muduo::Timestamp receive_time,
                           const muduo::net::InetAddress& peer_address) {
-    if (buf->readableBytes() < sizeof(MetaData)) {
-      LOG_ERROR << "buf size is too short";
+    if (buf->readableBytes() < sizeof(KCPSession::MetaData)) {
+      LOG_ERROR << "unexpected buf length: " << buf->readableBytes();
       return;
     }
 
@@ -41,7 +54,8 @@ class TestServer {
     int session_id = buf->readInt32();
     SessionIdMap::iterator it = all_sessions_.find(session_id);
     if (it == all_sessions_.end()) {
-      LOG_ERROR << "session not exists, session_id =  " << session_id;
+      LOG_ERROR << "session not exists, client session id: " << session_id
+                << " from " << peer_address.toIpPort();
       return;
     }
 
@@ -49,7 +63,8 @@ class TestServer {
 
     if (kind == KCPSession::MetaData::SYN) {
       if (buf->readableBytes() != 0) {
-        LOG_ERROR << "invalid meta data syn";
+        LOG_ERROR << "unexpected buf length: " << buf->readableBytes()
+                  << " in SYN meta data";
         return;
       }
 
@@ -58,27 +73,46 @@ class TestServer {
             boost::any_cast<const KCPSessionPtr&>(conn->getContext());
         if (kcp_session->session_id() != session_id) {
           LOG_FATAL << "impossible - kcp_session already exists, but "
-                       "session_id invalid, kcp_session->session_id() =,"
+                       "session id invalid, server session id: "
                     << kcp_session->session_id()
-                    << " syn session_id = " << session_id;
+                    << ", client session id = " << session_id;
         }
+        LOG_INFO << "recved duplicate SYN meta data, client session id: "
+                 << session_id << " from " << peer_address.toIpPort();
 
-        LOG_INFO << "recv duplicate syn, session_id = " << session_id;
+        KCPSession::MetaData data = {
+            KCPSession::MetaData::ACK,
+            static_cast<int>(sockets::hostToNetwork32(session_id))};
+        udp_server_.SendOrQueuePacket(reinterpret_cast<const char*>(&data),
+                                      sizeof(data), peer_address);
         return;
       }
 
       KCPSessionPtr kcp_session(new KCPSession);
-
       if (!kcp_session->Init(session_id, kFastModeKCPParams)) {
         conn->shutdown();
+        return;
       }
 
       kcp_session->set_context(peer_address);
+      kcp_session->set_message_callback(
+          boost::bind(&TestServer::OnKCPMessage, this, _1, _2));
+      kcp_session->set_output_callback(
+          boost::bind(&TestServer::SendUDPMessage, this, _1, _2));
+
+      KCPSession::MetaData data = {
+          KCPSession::MetaData::ACK,
+          static_cast<int>(sockets::hostToNetwork32(session_id))};
+      udp_server_.SendOrQueuePacket(reinterpret_cast<const char*>(&data),
+                                    sizeof(data), peer_address);
 
       conn->setContext(kcp_session);
     } else if (kind == KCPSession::MetaData::PSH) {
+      LOG_INFO << "UDP message recved time: " << receive_time.microSecondsSinceEpoch() / 1000;
+
       if (conn->getContext().empty()) {
-        LOG_FATAL << "impossible - kcp_session not exists";
+        LOG_FATAL << "impossible - kcp_session not exists, client session id: "
+                  << session_id;
         return;
       }
 
@@ -86,12 +120,31 @@ class TestServer {
           boost::any_cast<const KCPSessionPtr&>(conn->getContext());
       if (kcp_session->session_id() != session_id) {
         LOG_FATAL << "impossible - kcp_session already exists, but "
-                     "session_id invalid, kcp_session->session_id() =,"
+                     "session id invalid, server session id: "
                   << kcp_session->session_id()
-                  << " syn session_id = " << session_id;
+                  << ", client session id = " << session_id;
       }
 
       kcp_session->Feed(buf->peek(), buf->readableBytes());
+    } else {
+      LOG_ERROR << "recved unexpected kind: " << kind << " from "
+                << peer_address.toIpPort();
+    }
+  }
+
+  void OnKCPMessage(const KCPSessionPtr& kcp_session, muduo::net::Buffer* buf) {
+    const int kRttFrameLen = 2 * sizeof(int64_t);
+    if (buf->readableBytes() == kRttFrameLen) {
+      const int64_t* message = reinterpret_cast<const int64_t*>(buf->peek());
+      int64_t new_message[2] = {message[0], 0};
+      new_message[1] = muduo::Timestamp::now().microSecondsSinceEpoch() / 1000;
+      kcp_session->Send(reinterpret_cast<const char*>(new_message),
+                        kRttFrameLen);
+      LOG_INFO << "client clock: " << new_message[0]
+               << ", server clock: " << new_message[1];
+    } else {
+      LOG_ERROR << "recved unexpected packet length: " << buf->readableBytes()
+                << ", session_id: " << kcp_session->session_id();
     }
   }
 
@@ -99,6 +152,23 @@ class TestServer {
                           muduo::net::Buffer* buf, muduo::Timestamp) {
     (void)conn;
     (void)buf;
+  }
+
+  void SendSessionInitInfo(const muduo::net::TcpConnectionPtr& conn,
+                           int session_id) {
+    muduo::net::InetAddress addr;
+    int result = udp_server_.GetLocalAddress(&addr);
+    if (result < 0) {
+      return;
+    }
+
+    muduo::net::Buffer buf;
+    buf.appendInt16(addr.toPort());
+    buf.appendInt32(session_id);
+    conn->send(&buf);
+
+    LOG_INFO << "SendSessionInitInfo - session_id: " << session_id
+             << ", port:" << addr.toIpPort();
   }
 
   void OnTcpServerConnection(const muduo::net::TcpConnectionPtr& conn) {
@@ -110,10 +180,10 @@ class TestServer {
 
       if (session_id == kInvalidSessionId) {
         conn->shutdown();
+        return;
       }
 
-      MetaData data = {MetaData::SYN, session_id};
-      conn->send(&data, sizeof(data));
+      SendSessionInitInfo(conn, session_id);
 
       all_conns_[conn->name()] = conn;
       all_sessions_[session_id] = conn->name();
@@ -133,24 +203,62 @@ class TestServer {
     }
   }
 
-  void SendMessage(const KCPSessionPtr& kcp_session, muduo::net::Buffer* buf) {
+ private:
+  void SendUDPMessage(const KCPSessionPtr& kcp_session,
+                      muduo::net::Buffer* buf) {
     if (!kcp_session->context().empty()) {
       const muduo::net::InetAddress& peer_address =
-          boost::any_cast<InetAddress>(kcp_session->context());
-      udp_server_.SendOrQueuePcket(buf->peek(), buf->readableBytes(),
-                                   peer_address);
+          boost::any_cast<muduo::net::InetAddress>(kcp_session->context());
+      udp_server_.SendOrQueuePacket(buf->peek(), buf->readableBytes(),
+                                    peer_address);
+    }
+  }
+
+  void UpdateSession() {
+    muduo::Timestamp now = muduo::Timestamp::now();
+    TcpConnMap::iterator conn_iterator = all_conns_.begin();
+    while (conn_iterator != all_conns_.end()) {
+      const TcpConnectionPtr& conn = conn_iterator->second;
+      if (!conn->getContext().empty()) {
+        const KCPSessionPtr& kcp_session =
+            boost::any_cast<const KCPSessionPtr&>(conn->getContext());
+        if (!kcp_session->context().empty()) {
+          bool still_alive = kcp_session->Update(now);
+          if (!still_alive) {
+            conn->shutdown();
+          }
+          // LOG_INFO << "update session: " << kcp_session->session_id();
+        }
+      }
+      ++conn_iterator;
     }
   }
 
  private:
-  TcpServer tcp_server_;
-  UDPServer udp_server_;
-
   typedef std::map<string, TcpConnectionPtr> TcpConnMap;
   typedef std::map<int, string> SessionIdMap;
+
+  muduo::net::TcpServer tcp_server_;
+  UDPServer udp_server_;
+
+  // ProtobufCodec tcp_codec_;
+  // ProtobufDispatcher tcp_dispatcher_;
 
   TcpConnMap all_conns_;
   SessionIdMap all_sessions_;
 };
 
-int main() {}
+int main() {
+  using namespace muduo;
+  using namespace muduo::net;
+
+  EventLoop loop;
+  InetAddress tcp_server_addr(8090);
+  InetAddress udp_server_addr(8091);
+  TestServer server(&loop, tcp_server_addr, udp_server_addr);
+
+  server.Start();
+  loop.loop();
+
+  return 0;
+}

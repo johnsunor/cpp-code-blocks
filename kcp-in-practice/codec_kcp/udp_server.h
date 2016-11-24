@@ -42,6 +42,14 @@ class UDPServer : boost::noncopyable {
     }
   }
 
+  int GetPeerAddress(muduo::net::InetAddress* address) const {
+    return socket_.GetPeerAddress(address);
+  }
+
+  int GetLocalAddress(muduo::net::InetAddress* address) const {
+    return socket_.GetLocalAddress(address);
+  }
+
   void Close() { socket_.Close(); }
 
   void Start();
@@ -57,8 +65,8 @@ class UDPServer : boost::noncopyable {
 
   int SendTo(muduo::net::Buffer* buf, const muduo::net::InetAddress& address);
 
-  int SendOrQueuePcket(const void* buf, size_t len,
-                       const muduo::net::InetAddress& address);
+  void SendOrQueuePacket(const void* buf, size_t len,
+                         const muduo::net::InetAddress& address);
 
   void set_message_callback(const MessageCallback& cb) {
     message_callback_ = cb;

@@ -109,6 +109,8 @@ int UDPSocket::SetMulticastTimeToLive(int time_to_live) {
 }
 
 int UDPSocket::SetSocketOptions() {
+  assert(sockfd_ != kInvalidSocket);
+
   int true_value = 1;
   if (socket_options_ & SOCKET_OPTION_REUSE_ADDRESS) {
     int rv = setsockopt(sockfd_, SOL_SOCKET, SO_REUSEADDR, &true_value,
@@ -353,7 +355,7 @@ int UDPSocket::GetLocalAddress(muduo::net::InetAddress* address) const {
 
     boost::scoped_ptr<muduo::net::InetAddress> inet_addr(
         new muduo::net::InetAddress);
-    if (SockaddrStorage::ToInetAddr(storage, inet_addr.get())) {
+    if (!SockaddrStorage::ToInetAddr(storage, inet_addr.get())) {
       return EADDRNOTAVAIL;
     }
     local_address_.swap(inet_addr);
@@ -378,7 +380,7 @@ int UDPSocket::GetPeerAddress(muduo::net::InetAddress* address) const {
 
     boost::scoped_ptr<muduo::net::InetAddress> inet_addr(
         new muduo::net::InetAddress);
-    if (SockaddrStorage::ToInetAddr(storage, inet_addr.get())) {
+    if (!SockaddrStorage::ToInetAddr(storage, inet_addr.get())) {
       return EADDRNOTAVAIL;
     }
 

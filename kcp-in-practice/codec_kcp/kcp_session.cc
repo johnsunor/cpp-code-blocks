@@ -7,8 +7,7 @@
 #include <muduo/net/SocketsOps.h>
 #include <muduo/net/TcpClient.h>
 #include <muduo/net/TcpServer.h>
-
-#include "common/string_utils.h"
+#include <muduo/net/InetAddress.h>
 
 KCPSession::KCPSession() : session_id_(kInvalidSessionId), kcp_(NULL) {}
 
@@ -71,6 +70,7 @@ void KCPSession::Feed(const char* buf, size_t len) {
       LOG_FATAL << "::ikcp_recv impossible";
     }
 
+    input_buf_.hasWritten(rn);
     if (message_callback_) {
       message_callback_(shared_from_this(), &input_buf_);
     }
@@ -83,7 +83,35 @@ void KCPSession::Output(const char* buf, size_t len) {
   output_buf_.appendInt8(MetaData::PSH);
   output_buf_.appendInt32(session_id());
   output_buf_.append(buf, len);
-  output_callback_(shared_from_this(), &output_buf_);
+  if (output_callback_) {
+    output_callback_(shared_from_this(), &output_buf_);
+  }
+  output_buf_.retrieveAll();
+}
+
+void KCPSession::Send(const char* buf, size_t len) {
+  assert(session_id_ != kInvalidSessionId);
+  assert(kcp_->get() != NULL);
+
+  int result = ikcp_send(kcp_->get(), buf, static_cast<int>(len));
+  if (result < 0) {
+    LOG_ERROR << "ikcp_send data failed, len = " << len;
+  }
+}
+
+bool KCPSession::Update(muduo::Timestamp now) {
+  assert(session_id_ != kInvalidSessionId);
+  assert(kcp_->get() != NULL);
+  // assert(!context_.empty());
+
+  uint32_t now_ms = now.microSecondsSinceEpoch() / 1000;
+  ikcp_update(kcp_->get(), now_ms);
+  if (static_cast<int>(kcp_->get()->state) < 0) {
+    LOG_INFO << "kcp session link has dead, session_id = " << session_id();
+    return false;
+  }
+
+  return true;
 }
 
 int KCPSession::kcp_output_callback(const char* buf, int len, IKCPCB* kcp,

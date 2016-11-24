@@ -11,7 +11,9 @@
 
 #include <muduo/base/Logging.h>
 #include <muduo/base/Singleton.h>
+#include <muduo/base/Timestamp.h>
 #include <muduo/net/Buffer.h>
+#include <muduo/net/TimerId.h>
 
 #include "common/macros.h"
 
@@ -95,7 +97,7 @@ class KCPSession : boost::noncopyable,
   typedef boost::function<void(const KCPSessionPtr&, muduo::net::Buffer*)>
       OutputCallback;
 
-  struct ALIGNAS(1) MetaData {
+  struct PACKED MetaData {
     enum { SYN, ACK, PSH, PING };
     uint8_t kind;
     int session_id;
@@ -109,9 +111,16 @@ class KCPSession : boost::noncopyable,
   };
 
   KCPSession();
+
   bool Init(int session_id, const Params& params);
 
   void Feed(const char* buf, size_t len);
+
+  void Output(const char* buf, size_t len);
+
+  void Send(const char* buf, size_t len);
+
+  bool Update(muduo::Timestamp now);
 
   int session_id() const { return session_id_; }
 
@@ -124,10 +133,11 @@ class KCPSession : boost::noncopyable,
   const boost::any& context() const { return context_; }
   void set_context(const boost::any& context) { context_ = context; }
 
-  void Output(const char* buf, size_t len);
+  void set_timer_id(const muduo::net::TimerId& timer_id) {
+    timer_id_ = timer_id;
+  }
 
-  static int kcp_output_callback(const char* buf, int len, IKCPCB* kcp,
-                                 void* user);
+  const muduo::net::TimerId& timer_id() const { return timer_id_; }
 
  private:
   int session_id_;
@@ -140,6 +150,11 @@ class KCPSession : boost::noncopyable,
   muduo::net::Buffer output_buf_;
 
   boost::any context_;
+
+  muduo::net::TimerId timer_id_;
+
+  static int kcp_output_callback(const char* buf, int len, IKCPCB* kcp,
+                                 void* user);
 };
 
 const KCPSession::Params kFastModeKCPParams = {1, 10, 2, 1};

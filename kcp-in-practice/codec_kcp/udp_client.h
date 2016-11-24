@@ -39,7 +39,7 @@ class UDPClient : boost::noncopyable {
 
   int Write(muduo::net::Buffer* buf);
 
-  int WriteOrQueuePcket(const void* buf, size_t len);
+  void WriteOrQueuePcket(const void* buf, size_t len);
 
   void set_message_callback(const MessageCallback& cb) {
     message_callback_ = cb;
