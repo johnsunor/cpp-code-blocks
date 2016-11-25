@@ -5,12 +5,19 @@
 
 #include <muduo/base/Logging.h>
 #include <muduo/net/EventLoop.h>
+#include <muduo/net/Buffer.h>
+#include <muduo/net/Channel.h>
 
 #include "udp_socket.h"
 
-// class UDPSocket;
-// class EventLoop;
-// class Channel;
+namespace muduo {
+namespace net {
+
+class Buffer;
+class Channel;
+class EventLoop;
+}
+}
 
 class UDPClient : boost::noncopyable {
  public:

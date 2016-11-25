@@ -1,6 +1,8 @@
 
 #include "udp_socket.h"
 
+#include <muduo/base/Logging.h>
+
 UDPSocket::UDPSocket()
     : sockfd_(kInvalidSocket),
       addr_family_(AF_UNSPEC),

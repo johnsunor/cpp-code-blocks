@@ -4,13 +4,19 @@
 #include <boost/ptr_container/ptr_list.hpp>
 
 #include <muduo/base/Logging.h>
-#include <muduo/net/EventLoop.h>
+#include <muduo/base/Timestamp.h>
+#include <muduo/net/Buffer.h>
+#include <muduo/net/InetAddress.h>
 
 #include "udp_socket.h"
 
-// class UDPSocket;
-// class EventLoop;
-// class Channel;
+namespace muduo {
+namespace net {
+
+class Channel;
+class EventLoop;
+}
+}
 
 class UDPServer : boost::noncopyable {
  public:
@@ -23,7 +29,8 @@ class UDPServer : boost::noncopyable {
         read_buf_(kDefaultMaxPacketSize),
         write_blocked_(false) {}
 
-  UDPServer(muduo::net::EventLoop* loop, muduo::net::InetAddress listen_addr)
+  UDPServer(muduo::net::EventLoop* loop,
+            const muduo::net::InetAddress& listen_addr)
       : loop_(CHECK_NOTNULL(loop)),
         max_packet_size_(kDefaultMaxPacketSize),
         read_buf_(kDefaultMaxPacketSize),

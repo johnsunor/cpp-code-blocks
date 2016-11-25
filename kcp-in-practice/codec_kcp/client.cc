@@ -38,6 +38,15 @@ class TestClient {
 
     loop->runEvery(kClientSendMyTimeInterval,
                    boost::bind(&TestClient::SendMyTime, this));
+
+    loop->runEvery(30, boost::bind(&TestClient::PrintRttStats, this));
+  }
+
+  void PrintRttStats() {
+    for (std::map<int,int>::iterator it = rtt_stats_.begin();
+         it != rtt_stats_.end(); ++it) {
+      LOG_WARN << "RTT: " << it->first << ", stat times: " << it->second;
+    }
   }
 
   void SendMyTime() {
@@ -112,6 +121,12 @@ class TestClient {
       int64_t mine = (back + send) / 2;
       LOG_INFO << "round trip " << back - send << " clock error "
                << their - mine;
+      int64_t rtt = back - send;
+      if (rtt_stats_.find(rtt) == rtt_stats_.end()) {
+        rtt_stats_[rtt] = 1;
+      } else {
+        rtt_stats_[rtt]++;
+      }
     } else {
       LOG_ERROR << "recved unexpected packet length: " << buf->readableBytes()
                 << ", session_id: " << kcp_session->session_id();
@@ -165,20 +180,22 @@ class TestClient {
 
   void OnKCPSessionClose(const KCPSessionPtr& kcp_session) {
     LOG_INFO << "kcp session #" << kcp_session->session_id() << " need close";
-    if (tcp_conn_) {
-      tcp_client_.disconnect();
-    }
+    tcp_client_.disconnect();
   }
 
  private:
   muduo::net::TcpClient tcp_client_;
   UDPClient udp_client_;
   TcpConnectionPtr tcp_conn_;
+
+  std::map<int, int> rtt_stats_;
 };
 
 int main() {
   using namespace muduo;
   using namespace muduo::net;
+
+  g_logLevel = muduo::Logger::WARN;
 
   EventLoop loop;
   InetAddress server_addr(8090);

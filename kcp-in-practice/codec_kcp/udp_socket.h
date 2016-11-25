@@ -1,18 +1,18 @@
 
+#include <assert.h>
+
 #include <map>
 #include <queue>
 
-#include <boost/bind.hpp>
-#include <boost/unordered_map.hpp>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
-#include <muduo/base/Logging.h>
-#include <muduo/base/Singleton.h>
-#include <muduo/net/Channel.h>
-#include <muduo/net/EventLoop.h>
-#include <muduo/net/Socket.h>
-#include <muduo/net/SocketsOps.h>
-#include <muduo/net/TcpClient.h>
-#include <muduo/net/TcpServer.h>
+#include <boost/bind.hpp>
+#include <boost/noncopyable.hpp>
+#include <boost/scoped_ptr.hpp>
+
+#include <muduo/net/InetAddress.h>
 
 #include "common/macros.h"
 
@@ -39,7 +39,7 @@ struct SockaddrStorage {
     ::memcpy(addr, other.addr, addr_len);
   }
 
-  static bool ToSockAddr(const muduo::net::InetAddress address,
+  static bool ToSockAddr(const muduo::net::InetAddress& address,
                          SockaddrStorage* storage) {
     assert(storage != NULL);
 
@@ -161,4 +161,3 @@ class UDPSocket : boost::noncopyable {
 
   // boost::scoped_ptr<muduo::net::InetAddress> send_to_address_;
 };
-

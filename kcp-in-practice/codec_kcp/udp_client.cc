@@ -2,6 +2,7 @@
 #include "udp_client.h"
 
 #include <muduo/base/Logging.h>
+#include <muduo/net/SocketsOps.h>
 
 void UDPClient::Start() {
   assert(socket_.sockfd() != kInvalidSocket);

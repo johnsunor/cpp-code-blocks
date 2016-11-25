@@ -23,7 +23,6 @@ const int kInvalidSessionId = 0;
 const int kMaxSessionId = 100000;
 
 namespace muduo {
-
 namespace net {
 
 class EventLoop;
