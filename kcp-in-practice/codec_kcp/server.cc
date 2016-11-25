@@ -7,8 +7,8 @@
 #include <muduo/net/TcpServer.h>
 #include <muduo/net/InetAddress.h>
 
-#include "codec/codec.h"
-#include "codec/dispatcher.h"
+//#include "codec/codec.h"
+//#include "codec/dispatcher.h"
 
 #include "udp_server.h"
 #include "kcp_session.h"
@@ -32,8 +32,8 @@ class TestServer {
     udp_server_.set_message_callback(
         boost::bind(&TestServer::OnUDPServerMessage, this, _1, _2, _3));
 
-    loop->runEvery(kServerUpdateSessionInterval,
-                   boost::bind(&TestServer::UpdateSession, this));
+    // loop->runEvery(kServerUpdateSessionInterval,
+    // boost::bind(&TestServer::UpdateSession, this));
   }
 
   void Start() {
@@ -88,7 +88,7 @@ class TestServer {
         return;
       }
 
-      KCPSessionPtr kcp_session(new KCPSession);
+      KCPSessionPtr kcp_session(new KCPSession(conn->getLoop()));
       if (!kcp_session->Init(session_id, kFastModeKCPParams)) {
         conn->shutdown();
         return;
@@ -99,6 +99,8 @@ class TestServer {
           boost::bind(&TestServer::OnKCPMessage, this, _1, _2));
       kcp_session->set_output_callback(
           boost::bind(&TestServer::SendUDPMessage, this, _1, _2));
+      kcp_session->set_close_callback(
+          boost::bind(&TestServer::OnKCPSessionClose, this, _1));
 
       KCPSession::MetaData data = {
           KCPSession::MetaData::ACK,
@@ -204,6 +206,16 @@ class TestServer {
     }
   }
 
+  void OnKCPSessionClose(const KCPSessionPtr& kcp_session) {
+    int session_id = kcp_session->session_id();
+    SessionIdMap::iterator session_iterator = all_sessions_.find(session_id);
+    if (session_iterator != all_sessions_.end()) {
+      const muduo::net::TcpConnectionPtr& conn =
+          all_conns_[session_iterator->second];
+      conn->shutdown();
+    }
+  }
+
  private:
   void SendUDPMessage(const KCPSessionPtr& kcp_session,
                       muduo::net::Buffer* buf) {
@@ -212,26 +224,6 @@ class TestServer {
           boost::any_cast<muduo::net::InetAddress>(kcp_session->context());
       udp_server_.SendOrQueuePacket(buf->peek(), buf->readableBytes(),
                                     peer_address);
-    }
-  }
-
-  void UpdateSession() {
-    muduo::Timestamp now = muduo::Timestamp::now();
-    TcpConnMap::iterator conn_iterator = all_conns_.begin();
-    while (conn_iterator != all_conns_.end()) {
-      const TcpConnectionPtr& conn = conn_iterator->second;
-      if (!conn->getContext().empty()) {
-        const KCPSessionPtr& kcp_session =
-            boost::any_cast<const KCPSessionPtr&>(conn->getContext());
-        if (!kcp_session->context().empty()) {
-          bool still_alive = kcp_session->Update(now);
-          if (!still_alive) {
-            conn->shutdown();
-          }
-          // LOG_INFO << "update session: " << kcp_session->session_id();
-        }
-      }
-      ++conn_iterator;
     }
   }
 

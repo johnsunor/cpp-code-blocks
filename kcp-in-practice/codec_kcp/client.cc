@@ -6,8 +6,8 @@
 #include <muduo/net/TcpClient.h>
 #include <muduo/net/InetAddress.h>
 
-#include "codec/codec.h"
-#include "codec/dispatcher.h"
+//#include "codec/codec.h"
+//#include "codec/dispatcher.h"
 
 #include "udp_client.h"
 #include "kcp_session.h"
@@ -16,7 +16,7 @@ using namespace muduo;
 using namespace muduo::net;
 
 const double kClientUpdateSessionInterval = 0.005;  // 0.010/10ms
-const double kClientSendMyTimeInterval = 1;        // 1s
+const double kClientSendMyTimeInterval = 1;         // 1s
 
 const int kSessionInitFrameLen = sizeof(uint16_t) + sizeof(int);
 const int kRttFrameLen = 2 * sizeof(int64_t);
@@ -33,8 +33,8 @@ class TestClient {
     udp_client_.set_message_callback(
         boost::bind(&TestClient::OnUDPClientMessage, this, _1, _2));
 
-    loop->runEvery(kClientUpdateSessionInterval,
-                   boost::bind(&TestClient::UpdteSession, this));
+    // loop->runEvery(kClientUpdateSessionInterval,
+    // boost::bind(&TestClient::UpdteSession, this));
 
     loop->runEvery(kClientSendMyTimeInterval,
                    boost::bind(&TestClient::SendMyTime, this));
@@ -62,8 +62,7 @@ class TestClient {
 
     uint8_t kind = implicit_cast<uint8_t>(buf->readInt8());
     int session_id = buf->readInt32();
-    LOG_INFO << "kcp session #" << session_id
-             << " recved udp message at time: "
+    LOG_INFO << "kcp session #" << session_id << " recved udp message at time: "
              << receive_time.microSecondsSinceEpoch() / 1000;
 
     if (kind == KCPSession::MetaData::ACK) {
@@ -72,7 +71,7 @@ class TestClient {
         return;
       }
 
-      KCPSessionPtr kcp_session(new KCPSession);
+      KCPSessionPtr kcp_session(new KCPSession(tcp_conn_->getLoop()));
       if (!kcp_session->Init(session_id, kFastModeKCPParams)) {
         tcp_conn_->shutdown();
         return;
@@ -160,21 +159,14 @@ class TestClient {
   void SendUDPMessage(const KCPSessionPtr& kcp_session,
                       muduo::net::Buffer* buf) {
     LOG_INFO << "kcp session #" << kcp_session->session_id()
-             << " send udp message at time: "
-             << muduo::Timestamp::now().microSecondsSinceEpoch() / 1000;
+             << " send udp message with bytes: " << buf->readableBytes();
     udp_client_.WriteOrQueuePcket(buf->peek(), buf->readableBytes());
   }
 
-  void UpdteSession() {
-    if (tcp_conn_ && !tcp_conn_->getContext().empty()) {
-      muduo::Timestamp now = muduo::Timestamp::now();
-      const KCPSessionPtr& kcp_session =
-          boost::any_cast<const KCPSessionPtr&>(tcp_conn_->getContext());
-      bool still_alive = kcp_session->Update(now);
-      if (!still_alive) {
-        tcp_conn_->shutdown();
-      }
-      // LOG_INFO << "update session: " << kcp_session->session_id();
+  void OnKCPSessionClose(const KCPSessionPtr& kcp_session) {
+    LOG_INFO << "kcp session #" << kcp_session->session_id() << " need close";
+    if (tcp_conn_) {
+      tcp_client_.disconnect();
     }
   }
 
@@ -182,9 +174,6 @@ class TestClient {
   muduo::net::TcpClient tcp_client_;
   UDPClient udp_client_;
   TcpConnectionPtr tcp_conn_;
-
-  // ProtobufCodec tcp_codec_;
-  // ProtobufDispatcher tcp_dispatcher_;
 };
 
 int main() {
