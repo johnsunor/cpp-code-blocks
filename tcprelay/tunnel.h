@@ -50,16 +50,16 @@ class ServerConnMeta : boost::noncopyable {
   const BufferType* buf() const { return &buf_; }
   BufferType* mutable_buf() { return &buf_; }
 
-  ReqState state() { return state_; }
+  ReqState state() const { return state_; }
   void set_state(ReqState val) { state_ = val; }
 
-  const muduo::string& dst_hostname() { return dst_hostname_; }
+  const muduo::string& dst_hostname() const { return dst_hostname_; }
   void set_dst_hostname(const muduo::string& val) { dst_hostname_ = val; }
 
-  uint8_t dst_addr_len() { return dst_addr_len_; }
+  uint8_t dst_addr_len() const { return dst_addr_len_; }
   void set_dst_addr_len(uint8_t val) { dst_addr_len_ = val; }
 
-  uint16_t dst_port() { return dst_port_; }
+  uint16_t dst_port() const { return dst_port_; }
   void set_dst_port(uint16_t val) { dst_port_ = val; }
 
   bool ParseRequest() {
