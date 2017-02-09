@@ -2,6 +2,8 @@
 #ifndef TCPRELAY_UTILS_STRING_UTILS_H_
 #define TCPRELAY_UTILS_STRING_UTILS_H_
 
+#include <assert.h>
+
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -26,7 +28,7 @@ inline typename string_type::value_type* WriteInto(string_type* str,
 
 inline void GenRandString(std::string* str, int len) {
   assert(str != NULL && len > 0);
-  uint8_t* ptr = reinterpret_cast<uint8_t*>(WriteInto(str, len+1));
+  uint8_t* ptr = reinterpret_cast<uint8_t*>(WriteInto(str, len + 1));
   for (int i = 0; i < len; ++i) {
     uint8_t uch = static_cast<uint8_t>(rand() & 0xFF);
     ptr[i] = uch;
@@ -40,21 +42,21 @@ inline std::string GenRandString(int len) {
   return str;
 }
 
-inline void HexDump(const muduo::StringPiece& sp, std::string* result) {
-  assert(result != NULL); 
+inline void HexDump(muduo::StringPiece sp, std::string* result) {
+  assert(result != NULL);
   int now_len = 0;
   int len_with_null = 5 * sp.size() + 1;
   char* ptr = reinterpret_cast<char*>(WriteInto(result, len_with_null));
   for (int i = 0; i < sp.size(); ++i) {
     if (!(now_len >= 0 && now_len < len_with_null)) return;
-    int nc = snprintf(ptr+now_len, len_with_null-now_len,
-                      "0x%02x ", static_cast<uint8_t>(sp[i])); 
+    int nc = snprintf(ptr + now_len, len_with_null - now_len, "0x%02x ",
+                      static_cast<uint8_t>(sp[i]));
     if (nc <= 0) return;
     now_len += nc;
   }
 }
 
-inline std::string HexDump(const muduo::StringPiece& sp) {
+inline std::string HexDump(muduo::StringPiece sp) {
   std::string result;
   HexDump(sp, &result);
   return result;
@@ -71,7 +73,7 @@ inline void HexDump(const void* ptr, int len, std::string* result) {
 }
 
 inline void Split(std::string str, char delim, std::vector<std::string>* vs) {
-  assert (vs != NULL);
+  assert(vs != NULL);
   int len = static_cast<int>(str.size());
   for (int i = 0; i < len; ++i) {
     if (str[i] == delim) str[i] = ' ';
@@ -79,7 +81,7 @@ inline void Split(std::string str, char delim, std::vector<std::string>* vs) {
   std::stringstream ss(str);
   std::string x;
   while (ss >> x) {
-    vs->push_back(x); 
+    vs->push_back(x);
   }
 }
 
@@ -89,11 +91,12 @@ inline std::vector<std::string> Split(const std::string& str, char delim) {
   return vs;
 }
 
-inline void Join(const std::string& str, const std::vector<std::string>& vs, std::string* result) {
+inline void Join(const std::string& str, const std::vector<std::string>& vs,
+                 std::string* result) {
   assert(result != NULL);
   int str_len = static_cast<int>(str.size());
   int vs_len = static_cast<int>(vs.size());
-  int total_len = (vs_len > 0) ? (vs_len-1)*str_len : 0; 
+  int total_len = (vs_len > 0) ? (vs_len - 1) * str_len : 0;
 
   assert(str_len >= 0);
   assert(vs_len >= 0);
@@ -102,13 +105,13 @@ inline void Join(const std::string& str, const std::vector<std::string>& vs, std
   }
   assert(total_len >= 0);
 
-  char* ptr = reinterpret_cast<char*>(WriteInto(result, total_len+1));
+  char* ptr = reinterpret_cast<char*>(WriteInto(result, total_len + 1));
   int now_len = 0;
   for (int i = 0; i < vs_len; ++i) {
     int len = static_cast<int>(vs[i].size());
     for (int j = 0; j < len; ++j) {
       ptr[now_len++] = vs[i][j];
-    } 
+    }
     if (i < vs_len - 1) {
       for (int j = 0; j < str_len; ++j) {
         ptr[now_len++] = str[j];
@@ -117,7 +120,8 @@ inline void Join(const std::string& str, const std::vector<std::string>& vs, std
   }
 }
 
-inline std::string Join(const std::string& str, const std::vector<std::string>& vs) {
+inline std::string Join(const std::string& str,
+                        const std::vector<std::string>& vs) {
   std::string result;
   Join(str, vs, &result);
   return result;
@@ -145,7 +149,6 @@ inline std::string Trim(const std::string& str) {
   Trim(str, &result);
   return result;
 }
-
 }
 
 #endif

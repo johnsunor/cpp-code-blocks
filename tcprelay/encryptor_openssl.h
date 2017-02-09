@@ -24,9 +24,9 @@
 
 namespace crypto {
 
-bool SupportedCipher(const muduo::StringPiece& cipher_name);
+bool SupportedCipher(muduo::StringPiece cipher_name);
 
-size_t GetCipherIvLength(const muduo::StringPiece& cipher_name);
+size_t GetCipherIvLength(muduo::StringPiece cipher_name);
 
 namespace {
 
@@ -111,18 +111,18 @@ class Encryptor {
   //
   // If |mode| is CBC, |iv| must not be empty; if it is CTR, then |iv| must be
   // empty.
-  bool Init(const muduo::StringPiece& cipher_name,
-            const muduo::StringPiece& passwd,
-            const muduo::StringPiece& iv,
+  bool Init(muduo::StringPiece cipher_name,
+            muduo::StringPiece passwd,
+            muduo::StringPiece iv,
             bool do_encrypt);
 
   // Encrypts |plaintext| into |ciphertext|.  |plaintext| may only be empty if
   // the mode is CBC.
-  bool Update(const muduo::StringPiece& plaintext, std::string* ciphertext);
+  bool Update(muduo::StringPiece plaintext, std::string* ciphertext);
 
   bool Update(const char* plaintext, int text_size, std::string* ciphertext);
 
-  bool Update(const muduo::StringPiece& plaintext,
+  bool Update(muduo::StringPiece plaintext,
               muduo::net::Buffer* ciphertext);
 
   bool Update(const muduo::net::Buffer* plaintext,
@@ -140,9 +140,9 @@ class Encryptor {
   const std::string& passwd() const { return passwd_; }
 
  private:
-  bool Crypt(const muduo::StringPiece& input, std::string* output);
+  bool Crypt(muduo::StringPiece input, std::string* output);
 
-  bool Crypt(const muduo::StringPiece& input, muduo::net::Buffer* output);
+  bool Crypt(muduo::StringPiece input, muduo::net::Buffer* output);
 
  private:
   bool do_encrypt_;
