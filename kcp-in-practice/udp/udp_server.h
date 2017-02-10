@@ -23,17 +23,19 @@ class UDPServer : boost::noncopyable {
   typedef boost::function<void(muduo::net::Buffer*, muduo::Timestamp,
                                const muduo::net::InetAddress&)> MessageCallback;
 
-  explicit UDPServer(muduo::net::EventLoop* loop)
+  explicit UDPServer(muduo::net::EventLoop* loop,
+                     size_t max_packet_size = kDefaultMaxPacketSize)
       : loop_(CHECK_NOTNULL(loop)),
-        max_packet_size_(kDefaultMaxPacketSize),
-        read_buf_(kDefaultMaxPacketSize),
+        max_packet_size_(max_packet_size),
+        read_buf_(max_packet_size + 1),
         write_blocked_(false) {}
 
   UDPServer(muduo::net::EventLoop* loop,
-            const muduo::net::InetAddress& listen_addr)
+            const muduo::net::InetAddress& listen_addr,
+            size_t max_packet_size = kDefaultMaxPacketSize)
       : loop_(CHECK_NOTNULL(loop)),
-        max_packet_size_(kDefaultMaxPacketSize),
-        read_buf_(kDefaultMaxPacketSize),
+        max_packet_size_(max_packet_size),
+        read_buf_(max_packet_size + 1),
         write_blocked_(false) {
     ListenOrDie(listen_addr);
   }
@@ -79,13 +81,6 @@ class UDPServer : boost::noncopyable {
     message_callback_ = cb;
   }
 
-  size_t max_packet_size() const { return max_packet_size_; };
-
-  void set_max_packet_size(size_t max_packet_size) {
-    max_packet_size_ = max_packet_size;
-    read_buf_.ensureWritableBytes(max_packet_size_);
-  }
-
   bool IsWriteBlocked() const { return write_blocked_; }
 
   void SetWritable() { write_blocked_ = false; }
@@ -116,7 +111,7 @@ class UDPServer : boost::noncopyable {
   UDPSocket socket_;
   boost::scoped_ptr<muduo::net::Channel> channel_;
 
-  size_t max_packet_size_;
+  const size_t max_packet_size_;
   muduo::net::Buffer read_buf_;
 
   MessageCallback message_callback_;

@@ -22,17 +22,21 @@ void UDPServer::HandleRead(muduo::Timestamp receive_time) {
   muduo::net::InetAddress address;
   int bytes_transferred = socket_.RecvFrom(read_buf_.beginWrite(),
                                            read_buf_.writableBytes(), &address);
-  if (bytes_transferred > 0) {
+  if (bytes_transferred < 0) {
+    errno = bytes_transferred;
+    LOG_SYSERR << "UDPServer::handleRead";
+    HandleError();
+  } else if (muduo::implicit_cast<size_t>(bytes_transferred) <=
+             max_packet_size_) {
     read_buf_.hasWritten(bytes_transferred);
     if (message_callback_) {
       message_callback_(&read_buf_, receive_time, address);
     }
 
     read_buf_.retrieveAll();
-  } else if (bytes_transferred < 0) {
-    errno = bytes_transferred;
-    LOG_SYSERR << "UDPServer::handleRead";
-    HandleError();
+  } else {
+    LOG_WARN << "received packet size is too large from " << address.toIpPort()
+             << ", datagram has been truncated";
   }
 }
 

@@ -82,8 +82,9 @@ int UDPSocket::CreateSocket(int addr_family) {
   int sockfd = ::socket(addr_family, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC,
                         IPPROTO_UDP);
   if (sockfd == kInvalidSocket) {
+    int last_error = errno;
     LOG_SYSERR << "::socket";
-    return errno;
+    return last_error;
   }
 
   addr_family_ = addr_family;
@@ -392,4 +393,3 @@ int UDPSocket::GetPeerAddress(muduo::net::InetAddress* address) const {
   *address = *remote_address_;
   return 0;
 }
-

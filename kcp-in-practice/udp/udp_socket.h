@@ -21,7 +21,7 @@ const socklen_t kSockaddrIn6Size = sizeof(struct sockaddr_in6);
 
 const int kInvalidSocket = -1;
 
-const int kDefaultMaxPacketSize = 1452;
+const size_t kDefaultMaxPacketSize = 1452;
 
 struct SockaddrStorage {
   SockaddrStorage()
