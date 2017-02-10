@@ -77,4 +77,7 @@ char(&ArraySizeHelper(T(&array)[N]))[N];
 #define DLL_LOCAL
 #endif
 
+#define IS_EAGAIN(error) \
+  (((error) == EAGAIN || (error) == EWOULDBLOCK) ? true : false)
+
 #endif  // COMMON_MACROS_H_
