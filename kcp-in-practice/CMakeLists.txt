@@ -23,6 +23,7 @@ set(CXX_FLAGS
  #-Wshadow
  -Wwrite-strings
  -march=native
+ -fvisibility="hidden"
  # -MMD
  # -std=c++0x
  -rdynamic
@@ -32,10 +33,10 @@ if(CMAKE_BUILD_BITS EQUAL 32)
 endif()
 string(REPLACE ";" " " CMAKE_CXX_FLAGS "${CXX_FLAGS}")
 
-set(muduo_INCLUDE_DIR /home/johnsun/lib/muduo/)
-set(ccb_common_INCLUDE_DIR /home/johnsun/test/cc/cpp-code-blocks)
+set(muduo_INCLUDE_DIR /home/johnsun/software/muduo/)
+set(ccb_INCLUDE_DIR /home/johnsun/cpp-code-blocks)
 
-set(muduo_LINK_DIR /home/johnsun/lib/build/release/lib/)
+set(muduo_LINK_DIR /home/johnsun/software/build/release/lib/)
 
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)
@@ -59,7 +60,7 @@ endif()
 
 include_directories(
     ${muduo_INCLUDE_DIR}
-    ${ccb_common_INCLUDE_DIR}
+    ${ccb_INCLUDE_DIR}
     )
 
 link_directories(
@@ -69,14 +70,14 @@ link_directories(
 add_subdirectory(udp)
 add_subdirectory(kcp)
 
-add_executable(rtt_client.cc rtt_client.cc)
-target_link_libraries(rtt_client.cc muduo_net muduo_base z pthread)
-target_link_libraries(rtt_client.cc tcmalloc gflags)
-target_link_libraries(rtt_client.cc udp kcp)
+add_executable(rtt_client rtt_client.cc)
+target_link_libraries(rtt_client muduo_net muduo_base z pthread)
+target_link_libraries(rtt_client tcmalloc gflags)
+target_link_libraries(rtt_client udp kcp)
 
-add_executable(rtt_server.cc rtt_server.cc)
-target_link_libraries(rtt_server.cc muduo_net muduo_base z pthread)
-target_link_libraries(rtt_server.cc tcmalloc gflags)
-target_link_libraries(rtt_server.cc udp kcp)
+add_executable(rtt_server rtt_server.cc)
+target_link_libraries(rtt_server muduo_net muduo_base z pthread)
+target_link_libraries(rtt_server tcmalloc gflags)
+target_link_libraries(rtt_server udp kcp)
 
 
