@@ -144,6 +144,8 @@ class Encryptor {
 
   bool Crypt(muduo::StringPiece input, muduo::net::Buffer* output);
 
+  bool DoCrypt(muduo::StringPiece input, std::string* output);
+
  private:
   bool do_encrypt_;
   std::string cipher_name_;

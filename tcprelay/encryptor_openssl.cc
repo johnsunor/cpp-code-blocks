@@ -1,6 +1,3 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
 
 #include "encryptor_openssl.h"
 
@@ -124,40 +121,37 @@ bool Encryptor::Crypt(muduo::StringPiece input, muduo::net::Buffer* output) {
   assert(ctx_);
   assert(output != NULL);
 
-  // When encrypting, add another block size of space to allow for any padding.
-  const int output_size =
-      input.size() + (do_encrypt_ ? static_cast<int>(iv_.size()) : 0);
-  assert(output_size > 0);
-  assert(output_size + 1 > input.size());
-  output->ensureWritableBytes(output_size);
-
-  int out_len;
-  uint8_t* out_ptr = reinterpret_cast<uint8_t*>(output->beginWrite());
-  if (!EVP_CipherUpdate(ctx_->get(), out_ptr, &out_len,
-                        reinterpret_cast<const uint8_t*>(input.data()),
-                        input.size()))
+  // Must call Init() before En/De-crypt.
+  // Work on the result in a local variable, and then only transfer it to
+  // |output| on success to ensure no partial data is returned.
+  std::string result;
+  if (!DoCrypt(input, &result)) {
     return false;
+  }
 
-  // Write out the final block plus padding (if any) to the end of the data
-  // just written.
-  int tail_len;
-  if (!EVP_CipherFinal_ex(ctx_->get(), out_ptr + out_len, &tail_len))
-    return false;
-
-  out_len += tail_len;
-  assert(out_len <= static_cast<int>(output_size));
-
-  output->hasWritten(out_len);
-  return true;
+  output->append(result);
+  return false;
 }
 
 bool Encryptor::Crypt(muduo::StringPiece input, std::string* output) {
   assert(ctx_);
   assert(output != NULL);
+
   // Must call Init() before En/De-crypt.
   // Work on the result in a local variable, and then only transfer it to
   // |output| on success to ensure no partial data is returned.
   std::string result;
+  if (!DoCrypt(input, &result)) {
+    return false;
+  }
+
+  output->swap(result);
+  return true;
+}
+
+bool Encryptor::DoCrypt(muduo::StringPiece input, std::string* output) {
+  assert(ctx_);
+  assert(output != NULL);
   output->clear();
 
   // When encrypting, add another block size of space to allow for any padding.
@@ -166,7 +160,7 @@ bool Encryptor::Crypt(muduo::StringPiece input, std::string* output) {
   assert(output_size > 0);
   assert(output_size + 1 > input.size());
   uint8_t* out_ptr =
-      reinterpret_cast<uint8_t*>(utils::WriteInto(&result, output_size + 1));
+      reinterpret_cast<uint8_t*>(utils::WriteInto(output, output_size + 1));
   int out_len;
   if (!EVP_CipherUpdate(ctx_->get(), out_ptr, &out_len,
                         reinterpret_cast<const uint8_t*>(input.data()),
@@ -181,9 +175,9 @@ bool Encryptor::Crypt(muduo::StringPiece input, std::string* output) {
 
   out_len += tail_len;
   assert(out_len <= static_cast<int>(output_size));
-  result.resize(out_len);
+  output->resize(out_len);
 
-  output->swap(result);
   return true;
 }
+
 }
