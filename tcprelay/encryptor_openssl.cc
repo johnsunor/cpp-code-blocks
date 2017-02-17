@@ -130,7 +130,7 @@ bool Encryptor::Crypt(muduo::StringPiece input, muduo::net::Buffer* output) {
   }
 
   output->append(result);
-  return false;
+  return true;
 }
 
 bool Encryptor::Crypt(muduo::StringPiece input, std::string* output) {
