@@ -9,7 +9,7 @@
 TCP是在网络层(IP)的基础上为通信双方提供了可靠的、面向流的、全双工的、基于连接的通信方式，其核心有三点：可靠性、流量控制和拥塞控制。
 
 ####1. [TCP的可靠性](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#Reliable_transmission)
-TCP的可靠性传送在信息论与编码论中，属于是一种“尽力而为”的行为，即通过简单的尝试重复发送（ARQ）来进行尽力投递（delivery），在实现中主要通过下列方式来提供可靠性：
+TCP的可靠性传送在信息论与编码论中，属于是一种“尽力而为”的行为，即通过简单的尝试重复发送（ARQ）来进行尽力投递（delivery），但不保证数据一定会被递送到，也不保证被递送到的数据一定准确无误（TCP校验和是一种弱校验）。对于递送成功是指接收到了对端协议栈的确认（不代表应用级成功读取），对于递送失败（未成功收到对端协议栈确认）它可以给上层提供可靠的错误反馈。在实现中TCP主要通过下列方式来提供可靠性：
 > * 正面确认（positive acknowledgement）
 > * 丢失分组重传（timeout based retransmission & dupack based retransmission）
 > * 重复分组检测（duplicate packets discard）
@@ -223,7 +223,7 @@ TCP的拥塞控制主要用于控制数据进入网络的速率，避免网络�
 
 <tr>
 <td colspan="8" style="background:#fdd;" align="center">零</td>
-<td colspan="8" style="background:#fdd;" align="center">协议类型（17）</td>
+<td colspan="8" style="background:#fdd;" align="center">协议类型（6）</td>
 <td colspan="16" style="background:#fdd;" align="center">TCP分节长度</td>
 </tr>
 
@@ -243,11 +243,15 @@ TCP连接断开时需要的四次挥手，相比连接建立时多出来的一�
 　　a）[NS](https://tools.ietf.org/html/rfc3540)，随机和（Nonce Sum），这是一个实验性的flag，主要目的是给TCP通信中的发送端（往往是服务端）一种机制来检查接收端的一些异常行为（恶意的（如接收端TCP进行[乐观ACK攻击](http://www.kb.cert.org/vuls/id/102014)或故意移除ECE标志）或非恶意的（如通信链路中的NAT设备，Router，Firewall等可能由于不支持等原因将ECE标志清除）），异常的接收端可能会占用更多的带宽，破坏掉网络通信中带宽占用的公平性，提高自身的优先级。<br>
 　　b）[CWR](https://tools.ietf.org/html/rfc3540)，发送端拥塞窗口减小（Congestion window reduced），一般当发送端收到[ECE](https://tools.ietf.org/html/rfc3540)标志后会设置该选项，来通知对端，该选项需配合ECE标志和IP Header中的ECN bits协调使用，同时也需要通信两端以及通信链路中的设备支持才能起到特定的作用。<br>
 　　c）[ECE](https://tools.ietf.org/html/rfc3540)，ECN回显（ECN Echo），当通信中的接收端收到链路对于拥塞的感知（即IP Header中ECN bits被设置，如路由器感知到链路拥塞后设置）标志后，会将后续的TCP分节中设置ECE标志来通知发送端来提前进行拥塞控制，发送端收到ECE标志后会继而收敛CWN的东西，并设置CWR标志以通知接收端。这些协作机制可以避免网络中不必要的拥堵以及丢包，从而提升网络的性能。<br>
-　　d）RST，重置（Reset），是在TCP发生错误时发送的一种分节，有三种情况下会产生RST分节：1）在未运行服务的某地址上收到SYN分节后，会向对端发送RST分节，对端在接收到RST分节后会返回ECONNREFUSED错误（hard error）。2）通信的某一端想取消一个连接（如通过设置SO_LINGER套接字选项后调用close），如果服务端在进行accept时收到RST分节（客户端取消连接），那么服务端会返回ECONNABORTED（或EPROTO）错误（soft error），服务端需忽略这种错误。在连接已建立（至少是通信的某一端认为连接处于ESTABLISHED状态）的情况下收到RST分节后，会返回ECONNRESET错误，此时对应的连接应该被销毁。3）通信的某一端收到一个不存在（至少是收到数据的这一端认为连接不存在，如该端点主机崩溃并重启（即并未走正常的TCP连接断开时的四路挥手过程））的连接上的数据时会向另一端发送RST分节，此时连接也应该被销毁。
+　　d）RST，重置（Reset），是在TCP发生错误时发送的一种分节，有三种情况下会产生RST分节：1）在未运行服务的某地址上收到SYN分节后，会向对端发送RST分节，对端在接收到RST分节后会返回ECONNREFUSED错误（hard error）。2）通信的某一端想取消一个连接（如通过设置SO_LINGER套接字选项后调用close），如果服务端在进行accept时收到RST分节（客户端取消连接），那么服务端会返回ECONNABORTED（或EPROTO）错误（soft error），服务端需忽略这种错误。在连接已建立（至少是通信的某一端认为连接处于ESTABLISHED状态）的情况下收到RST分节后，会返回ECONNRESET错误，此时对应的连接应该被销毁。3）通信的某一端收到一个不存在（至少是收到数据的这一端认为连接不存在，如该端点主机崩溃并重启（即并未走正常的TCP连接断开时的四路挥手过程））的连接上的数据时会向另一端发送RST分节，此时连接也应该被销毁。另外，对于已经收到RST的TCP套接字再次进行写操作的话（如进程在连续的两次write操作之间收到RST），进程将会收到SIGPIPE信号（errno会被置为EPIPE），对于该信号的默认动作是终止相应的进程，为了避免未期望的终止，一般可以忽略（SIG_IGN）该信号。
   
-#####4）TCP[校验和](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_checksum_for_IPv4)（以IPV4为例）
+#####4）[TCP校验和](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_checksum_for_IPv4)（以IPV4为例）
 TCP的校验和是一种端到端的校验和，计算方式为对数据以16bits为单位进行反码和的反码计算，数据的具体内容包含12字节伪头部、最多60字节的首部、理论上最多65515字节的应用层数据，并在需要时用0字节将总长度填充为偶数长）。TCP的校验和是一种弱校验（weak check），数据在传输过程中如果出现双字节比特位反转，那么通过校验和将不能检测出这种错误，加上链路层（link layer）的校验和的一些缺点（在跨网段通信时路由器可能由于硬件错误而破坏数据）。所以，对于重要的数据在通信时一般也需要应用层提供更进一步的错误校验。
 
+#####5）TCP-Options）
+[MSS](https://en.wikipedia.org/wiki/Maximum_segment_size)，最大分段长度（Maximum Segment Size），通信的一端在连接建立时可以通知另一端在单个TCP分节中所能承载的数据量的最大大小（不包含TCP Header中固定大小部分）。设置该TCP选项的作用一般是：1）通知接收端实际可用的MSS大小（默认情况下发送端可用的MSS大小为536字节（IPv4），因为IPv4中对于分片所需的最小重组缓冲区大小为576字节，去除IP首部和TCP首部中各自固定大小的20字节，留给MSS的大小为536字节（实际使用中一般按512字节使用））。2）避免IP层进行分片（fragmentation），对于IP层来说，需要考虑链路层MTU的大小，结合MTU进行分片，当所有分片到达对端之后再进行重组（reassembling），如果在传输的过程中任何一片丢失（接收端IP层计时器超时）的话，那么IP将会丢弃掉所有之前收到的分片，那么对于上层提供可靠传输的协来说将不得不重传整个IP数据包（分片前的数据包），这样就加大了重传的开销（overhead），所以这一点对于TCP来说比较重要。该选项在TCP Header的Options中本身占用4Bytes，其中value部分占用2Bytes（|kind=2|length=4|value(以太网中典型值为1460)|）。另外，该选项是在随着TCP连接的建立即SYN分节发送到对端的，在TCP连接建立时该数值一般由操作系统根据协议栈的反馈自己来[设定](https://en.wikipedia.org/wiki/Maximum_segment_size#Inter-Layer_Communication)。
+
+[WS](https://en.wikipedia.org/wiki/TCP_window_scale_option)，窗口规模选项（Window Scale Option），用于扩大接收缓冲区的大小，默认情况下接收缓冲大小不超过65535（TCP Header中Window Size大小为2Bytes），发送端通过设置该选项，可以告诉接收端自身接收缓冲区实际的大小。扩大接收缓冲区的主要目的是为了提升在长胖管道（Long Fat Pipe）中通信时的吞吐量（Throughput）。管道的容量为带宽（Bandwidth）与时延（RTT）的乘积，想要尽量利用这条管道的通信容量就需要发送缓冲区大小和接收缓冲区大小的配合，对于应用层来说能不能传输（进行write），直接原因一般是缓冲区可用空间的大小（water level）来决定的，所以要尽量合理利用缓冲区的大小。该选项在TCP Header的Options中本身占用三个字节（|kind=3|length=3|value(最大为14)|），其中value部分占用一个字节，代表的是“窗口大小”字段按位左移的位数，由于窗口自身在判断重复分节上的一些[限制](https://tools.ietf.org/html/rfc1323#page-10)，value的最大值为14（即实际实际窗口的最大容量约为1GB）。
 [^_^]: TODO
 
 
