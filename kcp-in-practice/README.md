@@ -238,7 +238,7 @@ TCP连接断开时需要的四次挥手，相比连接建立时多出来的一�
 #####3）序列号
 32位的序列号用于标示TCP发送端到接收端的数据流中的一个字节（在带有数据的分节中是数据部分的首个字节），SYN分节中包含着发送端的ISN，FIN分节包含着发送端的LSN。在TCP中凡是消耗SN（使SN有效递增）的分节（SYN、FIN和带有payload的分节）都需要“[重传](https://en.wikipedia.org/wiki/Retransmission_(data_networks))”来提供可靠性保障。ISN的生成需要考虑一定的[安全](https://tools.ietf.org/html/rfc1948)因素（被攻击者guess到之后，可以向连接中注入伪造的数据包进行攻击），另外一个需要考虑的因素是避免快速回绕，在[Linux2.6.39](http://lxr.free-electrons.com/source/drivers/char/random.c?v=2.6.39#L1528)中典型的实现是通过结合通信双方的IP、Port构成的四元组进行散列计算以及一个动态变化的时钟（每64ns加1，32位无符号数环绕一次周期约为274秒，这个周期也避免了网络中处于MSL（[RFC793](https://tools.ietf.org/html/rfc793#section-3.3)建议值为2min，Linux下典型值为30s）内旧的无效的分组和TCP新产生的分组间的干扰）进行生成的。关于序列号的防回绕，另一个可以用的机制是TCP的[时间戳选项](https://tools.ietf.org/html/rfc7323)，后文会有更详细的介绍。
 
-#####4）TCP-Flags
+#####4）TCP Flags
 一些老的TCP实现中只能理解其中的后6位flags，前三个主要和拥塞控制有关。
 * [NS](https://tools.ietf.org/html/rfc3540)，随机和（Nonce Sum），这是一个实验性的flag，主要目的是给TCP通信中的发送端（往往是服务端）一种机制来检查接收端的一些异常行为（恶意的（如接收端TCP进行[乐观ACK攻击](http://www.kb.cert.org/vuls/id/102014)或故意移除ECE标志）或非恶意的（如通信链路中的NAT设备，Router，Firewall等可能由于不支持等原因将ECE标志清除）），异常的接收端可能会占用更多的带宽，破坏掉网络通信中带宽占用的公平性，提高自身的优先级。
 * [CWR](https://tools.ietf.org/html/rfc3540)，发送端拥塞窗口减小（Congestion window reduced），一般当发送端收到[ECE](https://tools.ietf.org/html/rfc3540)标志后会设置该选项，来通知对端，该选项需配合ECE标志和IP Header中的ECN bits协调使用，同时也需要通信两端以及通信链路中的设备支持才能起到特定的作用。
@@ -248,11 +248,16 @@ TCP连接断开时需要的四次挥手，相比连接建立时多出来的一�
 #####4）[TCP校验和](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_checksum_for_IPv4)（以IPV4为例）
 TCP的校验和是一种端到端的校验和，计算方式为对数据以16bits为单位进行反码和的反码计算，数据的具体内容包含12字节伪头部、最多60字节的首部、理论上最多65515字节的应用层数据，并在需要时用0字节将总长度填充为偶数长）。TCP的校验和是一种弱校验（weak check），数据在传输过程中如果出现双字节比特位反转，那么通过校验和将不能检测出这种错误，加上链路层（link layer）的校验和的一些缺点（在跨网段通信时路由器可能由于硬件错误而破坏数据）。所以，对于重要的数据在通信时一般也需要应用层提供更进一步的错误校验。
 
-#####5）TCP-Options）
+#####5）[TCP-Options](https://tools.ietf.org/html/rfc793#page-17)
+位于TCP Header尾部的TCP选项提供了一种扩展TCP协议的能力，典型的分两种：1）单字节形式（如EOL、NOP等）2）|kind|length|value|形式（如MSS、WS等）。其中NOP选项可用于在多个选项之间进行填充（padding）以使各个选项的起始位置按四字节对齐（不过实现中并不一定[这样做](https://tools.ietf.org/html/rfc793#page-18)）。
 * [MSS](https://en.wikipedia.org/wiki/Maximum_segment_size)，最大分段长度（Maximum Segment Size），通信的一端在连接建立时可以通知另一端在单个TCP分节中所能承载的数据量的最大大小（不包含TCP Header中固定大小部分）。设置该TCP选项的作用一般是：1）通知接收端实际可用的MSS大小（默认情况下发送端可用的MSS大小为536字节（IPv4），因为IPv4中对于分片所需的最小重组缓冲区大小为576字节，去除IP首部和TCP首部中各自固定大小的20字节，留给MSS的大小为536字节（实际使用中一般按512字节使用））。2）避免IP层进行分片（fragmentation），对于IP层来说，需要考虑链路层MTU的大小，结合MTU进行分片，当所有分片到达对端之后再进行重组（reassembling），如果在传输的过程中任何一片丢失（接收端IP层计时器超时）的话，那么IP将会丢弃掉所有之前收到的分片，那么对于上层提供可靠传输的协来说将不得不重传整个IP数据包（分片前的数据包），这样就加大了重传的开销（overhead），所以这一点对于TCP来说比较重要。该选项在TCP Header的Options中本身占用4Bytes，其中value部分占用2Bytes（|kind=2|length=4|value(以太网中典型值为1460)|）。另外，该选项是在随着TCP连接的建立即SYN分节发送到对端的，在TCP连接建立时该数值一般由操作系统根据协议栈的反馈自己来[设定](https://en.wikipedia.org/wiki/Maximum_segment_size#Inter-Layer_Communication) 。
 * [WS](https://en.wikipedia.org/wiki/TCP_window_scale_option)，窗口规模选项（Window Scale Option），用于扩大接收缓冲区的大小，默认情况下接收缓冲大小不超过65535（TCP Header中Window Size大小为2Bytes），发送端通过设置该选项，可以告诉接收端自身接收缓冲区实际的大小。扩大接收缓冲区的主要目的是为了提升在长胖管道（Long Fat Pipe）中通信时的吞吐量（Throughput）。管道的容量为带宽（Bandwidth）与时延（RTT）的乘积，想要尽量利用这条管道的通信容量就需要发送缓冲区大小和接收缓冲区大小的配合，对于应用层来说能不能传输（进行write），直接原因一般是缓冲区可用空间的大小（water level）来决定的，所以要尽量合理利用缓冲区的大小。该选项在TCP Header的Options中本身占用三个字节（|kind=3|length=3|value(最大为14)|），其中value部分占用一个字节，代表的是“窗口大小”字段按位左移的位数，由于窗口自身在判断重复分节上的一些[限制](https://tools.ietf.org/html/rfc1323#page-10)，value的最大值为14（即实际实际窗口的最大容量约为1GB）。
 * [SACK](https://tools.ietf.org/html/rfc2018)，选择性确认（Selective Acknowledgment），主要用于提高重传的效率，TCP可以将滑动窗口内的数据以多个分组的形式连续发送出去（即成块的数据流），如果传输过程中有多个分组丢失，那么在每个RTT内发送端只能从原始的累积性确认（Cumulative Acknowledgment）中检测到一个分组的丢失，这样就加大了整体的重传的延迟。TCP中发送端通过选择性重传，以正面确认形式告诉接收端哪些分组已经成功接收到了，这样接收端便可以只重传那些丢失了的分组，提高了重传的效率。据[RFC2018](https://tools.ietf.org/html/rfc2018)的描述，该选项占用两个kind的选项，其中kind为4的选项(TCP Sack-Permitted Option)用来发送端在连接建立（随SYN分节发送）时通知接收端是否支持接收选择性确认通知，以便接收端在后续可以发送选择性确认数据。kind为5的选项用来通知发送端接收端已经成功接收到数据块的序列号范围，该选项可包含多个范围，每个范围被称之为一个SACK块，由两个32位整数构成（[left SN, right SN)），n个数据块总共占用的空间大小为8n+2，考虑到TCP选项部分最多为40字节，理论上n最多为4，实际最大个数还要考虑到其它选项对空间的占用情况（如时间戳选项），关于本选项的更多细节可参考[RFC2018](https://tools.ietf.org/html/rfc2018)。
 * [TSOpt](http://www.ietf.org/rfc/rfc1323.txt)，时间戳选项（Timestamps Option），形式上包含两个4字节的时间戳字段（|kind=8|length=10|TSval(32bits)|TSEcr(32bits)|）。该选项典型有三个作用：1）用于区分在高速传输的网络上（MSL时间内）两个具有相同序列号（TCP首部中的序列号）的TCP分节（一个为旧的重复分节，一个为最近新产生的分节），它可以被看作为一个对原始序列号的32位（TSval字段）扩展，作用上被称之为防回绕序列号（PAWS）。2）用于估算RTT，接收端借助发送端所ACked的TCP分节中的时间戳回显数值（TSEcr字段）以及当前时间戳，便可以计算出相应数据包的RTT，可以为[RTO](https://tools.ietf.org/search/rfc6298)的计算提供更精准的样本。3）对于服务端可配合[SYN Cookie](https://en.wikipedia.org/wiki/SYN_cookies)功能使用，当触发tcp_syncookies功能时可用于缓存客户端syn分节中所通告的MSS、WS、SACK等TCP选项的数值，以供后续连接成功建立时，恢复原始选项的数值，方便正常通信使用。
+
+#####6）TCP State
+在TCP连接的整个生存期间，通信的端点（TCP Socket）会经历一系列的状态变化，整个的状态转换便组成了TCP的状态机。关于TCP的状态转换可参考[这里](http://www.medianet.kent.edu/techreports/TR2005-07-22-tcp-EFSM.pdf)，本部分主要讲一下TIME_WAIT状态。
+* TIME_WAIT状态出现在TCP连接正常断开时主动关闭的一端（即率先发送FIN分节的一端，如果是同时关闭，则两端最终都会处于TIME_WAIT状态），其典型的作用有两个：1）用于支持TCP连接双向可靠地断开，因为在TCP连接正常断开时的四次挥手过程中主动关闭的一端会向对端发送最后的一路ACK分节，如果该路的ACK分节出现丢失或接收端检测到超时（重传FIN），主动关闭端需要能够正确的进行重传（前文曾提到任何消耗SN的分节都需要TCP的重传机制进行可靠性保障），处于TIME_WAIT状态的socket可以满足这种需求。2）避免采用相同五元组连接的新的化身受到旧的化身中的分组（lost duplicate packets or wandering duplicate packets）的干扰。
   
 [^_^]: TODO
 
