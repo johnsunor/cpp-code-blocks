@@ -1,6 +1,6 @@
 ###概要
 
-本部分源码主要为基于[KCP](https://github.com/skywind3000/kcp)协议所做的一些实践，本文主要汇总了个人在TCP、UDP、KCP上的一些总结（以Linux和IPv4为主），在一些细节和有偏差的部分请以更正式的文档（RFC）、具体的实现（Linux协议栈）及相关的实践或实验为主作参考。<br>
+本部分源码主要为基于[KCP](https://github.com/skywind3000/kcp)协议所做的一些实践，本文主要汇总了个人在TCP、UDP、KCP上的一些总结（环境以Linux和IPv4为主），在一些细节或有偏差的部分请以更正式的文档（RFC）、更具体的实现（Linux协议栈）以及更实际的相关的实践或实验为主作参考。<br>
 
 从整体上来说KCP相当于在应用层实现了TCP的一些核心机制（可靠性、流量控制和拥塞控制），但并不负责底层数据的传输。在可靠性上面，KCP主要实现了：1）正面确认，包含累积性确认和类似于TCP中SACK的选择性确认。2）在重传上包含有超时重传和快速重传 。4）重复分组去重以及乱序分组重排。实现中并不包含端到端的校验功能，这一点可以交给底层的通信层（如使用开启校验和的UDP）或是由应用层自己来实现（如应用层可加入自己的CRC校验）。在流量控制上面，KCP提供了类似于TCP中的滑动窗口机制来实现，发送缓冲区和接收缓冲区的大小初始时由用户自己设置。在拥塞控制上面（可以由用户选择性开启），KCP也实现了拥塞窗口，借助快速重传可以激活快速恢复算法，在检测到超时丢包时，也可以触发慢启动。KCP的优势主要在于在提供可靠性的条件下，可以降低（由用户控制）对于丢包的敏感度（退避），在超时重传上用户可以降低RTO的退避，通过开启nodelay机制可以加快ack的发送，降低延迟。在有流量控制的前提下，通过关闭拥塞控制，可以避免传送速度的突降。总体来说相对于TCP在一些有折中处理机制或规避处理的环节，KCP可以以一种相对激进的方式来处理（更保守的退避），从而降低延迟，加快通信。当然其缺点也比较明显，带宽的利用率不够高（考虑TCP的nagle算法和delayed-ack机制）可能会进一步增加网络整体的拥塞。降低退避的处理，提升性能的同时，也损失了一定的公平性，侧面提升了自身通信的优先级和带宽占用率，另外一点就是底层传输上一般结合着UDP使用，不太适用于需要大流量传输的通信模式。
 ****
@@ -9,7 +9,7 @@
 TCP是在网络层(IP)的基础上为通信双方提供了可靠的、面向流的、全双工的、基于连接的通信方式，其核心有三点：可靠性、流量控制和拥塞控制。
 
 ####1. [TCP的可靠性](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#Reliable_transmission)
-TCP的可靠性传送在信息论与编码论中属于是一种“尽力而为”的行为，在发送端检测到丢包（或因为差错被对端丢弃）时通过简单的尝试重复发送即ARQ（ARQ也可以被称之为“Backward error correction”，关于差错控制另一种典型的处理方式是FEC([Forward error correction](https://en.wikipedia.org/wiki/Forward_error_correction))）来进行尽力投递（delivery），但不保证数据一定会被递送到，也不保证被递送到的数据一定准确无误（TCP校验和是一种弱校验）。对于递送成功（Linux下不是指write系统调用成功返回）是指接收到了对端协议栈的确认（不代表对端应用成功读取以及应用级确认），对于递送失败（未成功收到对端协议栈确认）它可以给上层提供可靠的错误反馈（errno、SO_ERROR、poll-event等）。在实现中TCP主要通过下列方式来提供可靠性：
+TCP的可靠性传送在信息论与编码论中属于是一种“尽力而为”的行为，在发送端检测到丢包（或因为差错被对端丢弃）时通过简单的尝试“重复发送”即ARQ（ARQ也可以被称之为“Backward error correction”，关于差错控制另一种典型的处理方式是FEC([Forward error correction](https://en.wikipedia.org/wiki/Forward_error_correction))）来进行尽力投递（delivery），但不保证数据一定会被递送到，也不保证被递送到的数据一定准确无误（TCP校验和是一种弱校验）。对于递送成功（Linux下不是指write系统调用成功返回）是指接收到了对端协议栈的确认（不代表对端应用成功读取以及应用级确认），对于递送失败（未成功收到对端协议栈确认）它可以给上层提供可靠的错误反馈（errno、SO_ERROR、poll-event等）。在实现中TCP主要通过下列方式来提供可靠性：
 > * 正面确认（positive acknowledgement）
 > * 丢失分组重传（timeout based retransmission & dupack based retransmission）
 > * 重复分组检测（duplicate packets discard）
@@ -23,7 +23,7 @@ TCP使用端到端的流量控制方式，主要用于避免数据在发送和�
 > * 用于提高网络利用率的[tcp-nagle](https://en.wikipedia.org/wiki/Nagle's_algorithm)算法和[delayed-ack](https://en.wikipedia.org/wiki/TCP_delayed_acknowledgment)算法
 
 ####3. [TCP的拥塞控制](https://en.wikipedia.org/wiki/TCP_congestion_control)
-TCP的拥塞控制主要用于控制数据进入网络的速率，避免网络拥堵，提高网络传输整体的性能。因为通信状况是动态变化的，所以下面所列出的各项机制往往是在通信过程中是动态的相互配合使用的。传统的TCP实现对于网络拥塞的感知是以丢包为信号的，当丢包发生时，会分析丢包的原因（超时或快速重传），然后触发不同的机制（慢启动或拥塞避免）来进行拥塞控制（收敛拥塞窗口和慢启动门限）。抑或借助网络设备（一般受限于网络设备的部署及更新换代）对于拥塞的感知（路由器的ECN能力）来在丢包出现前提前进行拥塞控制。不过随着网络通信的发展，基于丢包的拥塞控制算法已经有点过时了，有时并不能反馈真实的网络拥塞情况，对于丢包的过渡反馈以及典型的[bufferboat](https://en.wikipedia.org/wiki/Bufferbloat)问题会使吞吐量和延迟受到明显的影响。Google开源的[BBR](https://queue.acm.org/detail.cfm?id=3022184)(基于拥塞的拥塞的控制)算法，在实践中对于吞吐量的提高和延迟的降低都取得了不错的效果。
+TCP的拥塞控制主要用于控制数据进入网络的速率，避免网络拥堵，提高网络传输整体的性能。因为通信状况是动态变化的，所以下面所列出的各项机制往往是在通信过程中是动态的相互配合使用的。传统的TCP实现对于网络拥塞的感知是以丢包为信号的，当丢包发生时，会分析丢包的原因（超时或快速重传），然后触发不同的机制（慢启动或拥塞避免）来进行拥塞控制（收敛拥塞窗口和慢启动门限）。抑或借助网络设备（一般受限于网络设备的部署及更新换代）对于拥塞的感知（路由器的ECN能力）来在丢包出现前提前进行拥塞控制。不过随着网络通信的发展，基于丢包的拥塞控制算法已经有点过时了，有时并不能反馈真实的网络拥塞情况，对于丢包的过度反馈以及典型的[bufferboat](https://en.wikipedia.org/wiki/Bufferbloat)问题会使吞吐量和延迟受到明显的影响。Google开源的[BBR](https://queue.acm.org/detail.cfm?id=3022184)(基于拥塞的拥塞的控制)算法，在实践中对于吞吐量的提高和延迟的降低都取得了不错的效果。
 > * 慢启动[slow start](https://en.wikipedia.org/wiki/TCP_congestion_control#Slow_start)
 > * 拥塞避免[congestion window](https://en.wikipedia.org/wiki/Congestion_window)
 > * 用于激活快速恢复算法[fast recovery](http://www.isi.edu/nsnam/DIRECTED_RESEARCH/DR_WANIDA/DR/JavisInActionFastRecoveryFrame.html)的快速重传算法[fast retransmit](https://en.wikipedia.org/wiki/TCP_congestion_control#Fast_retransmit)
