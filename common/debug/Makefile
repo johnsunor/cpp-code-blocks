@@ -10,11 +10,11 @@ TARGET = test
 
 all: $(TARGET) 
 
-%.o: %.cc
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c -o $@ $<
-
 $(TARGET): $(SRCS:.cc=.o)
 	$(CXX) $(LDFLAGS) -o $@ $^
+
+%.o: %.cc
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c -o $@ $<
 
 .PHONY: clean
 

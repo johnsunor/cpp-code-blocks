@@ -1,7 +1,7 @@
 
 #include "stack_trace.h"
 
-void bar(StackTrace* o) { 
+NOINLINE void bar(StackTrace* o) { 
   PrintToStderr("\ndump stack frames from `bar`\n");
   StackTrace s;
   s.Print();
@@ -10,7 +10,7 @@ void bar(StackTrace* o) {
   o->Print();
 }
 
-void foo(StackTrace* o) { 
+NOINLINE void foo(StackTrace* o) { 
   PrintToStderr("\ndump stack frames from `foo`\n");
   StackTrace s;
   s.Print();
