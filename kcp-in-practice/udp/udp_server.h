@@ -77,6 +77,9 @@ class UDPServer : boost::noncopyable {
   void SendOrQueuePacket(const void* buf, size_t len,
                          const muduo::net::InetAddress& address);
 
+  void SendOrQueuePacket(muduo::net::Buffer* buf,
+                         const muduo::net::InetAddress& address);
+
   void set_message_callback(const MessageCallback& cb) {
     message_callback_ = cb;
   }

@@ -1,4 +1,7 @@
 
+#ifndef UDP_SOCKET_H_
+#define UDP_SOCKET_H_
+
 #include <assert.h>
 
 #include <map>
@@ -97,6 +100,7 @@ struct SockaddrStorage {
 class UDPSocket : boost::noncopyable {
  public:
   UDPSocket();
+  ~UDPSocket();
 
   int Connect(const muduo::net::InetAddress& address);
   int Bind(const muduo::net::InetAddress& address);
@@ -130,7 +134,7 @@ class UDPSocket : boost::noncopyable {
 
   int sockfd() const { return sockfd_; }
 
-  bool is_connected() const { return sockfd_ != kInvalidSocket; }
+  bool IsConnected() const { return sockfd_ != kInvalidSocket; }
 
  private:
   enum SocketOptions {
@@ -161,3 +165,5 @@ class UDPSocket : boost::noncopyable {
 
   // boost::scoped_ptr<muduo::net::InetAddress> send_to_address_;
 };
+
+#endif

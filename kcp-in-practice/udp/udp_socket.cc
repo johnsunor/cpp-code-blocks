@@ -8,8 +8,12 @@ UDPSocket::UDPSocket()
       addr_family_(AF_UNSPEC),
       socket_options_(SOCKET_OPTION_MULTICAST_LOOP) {}
 
+UDPSocket::~UDPSocket() {
+  Close();
+}
+
 int UDPSocket::Connect(const muduo::net::InetAddress& address) {
-  assert(!is_connected());
+  assert(!IsConnected());
   assert(!remote_address_.get());
 
   int addr_family = address.family();
@@ -36,7 +40,7 @@ int UDPSocket::Connect(const muduo::net::InetAddress& address) {
 }
 
 int UDPSocket::Bind(const muduo::net::InetAddress& address) {
-  assert(!is_connected());
+  assert(!IsConnected());
 
   int rv = CreateSocket(address.family());
   if (rv < 0) {
@@ -94,14 +98,14 @@ int UDPSocket::CreateSocket(int addr_family) {
 }
 
 int UDPSocket::SetMulticastInterface(uint32_t interface_index) {
-  assert(!is_connected());
+  assert(!IsConnected());
 
   multicast_interface_ = interface_index;
   return 0;
 }
 
 int UDPSocket::SetMulticastTimeToLive(int time_to_live) {
-  assert(!is_connected());
+  assert(!IsConnected());
 
   if (time_to_live < 0 || time_to_live > 255) {
     return EINVAL;
@@ -207,13 +211,13 @@ int UDPSocket::SetSocketOptions() {
 }
 
 void UDPSocket::AllowAddressReuse() {
-  assert(!is_connected());
+  assert(!IsConnected());
 
   socket_options_ |= SOCKET_OPTION_REUSE_ADDRESS;
 }
 
 void UDPSocket::AllowBroadcast() {
-  assert(!is_connected());
+  assert(!IsConnected());
 
   socket_options_ |= SOCKET_OPTION_BROADCAST;
 }
@@ -330,11 +334,10 @@ int UDPSocket::InternalSendTo(const void* buf, size_t len,
 }
 
 void UDPSocket::Close() {
-  if (!is_connected()) {
+  if (!IsConnected()) {
     return;
   }
 
-  // Zero out any pending read/write callback state.
   if (IGNORE_EINTR(::close(sockfd_)) < 0) {
     LOG_SYSERR << "::close";
   }
@@ -346,7 +349,7 @@ void UDPSocket::Close() {
 int UDPSocket::GetLocalAddress(muduo::net::InetAddress* address) const {
   assert(address != NULL);
 
-  if (!is_connected()) {
+  if (!IsConnected()) {
     return ENOTCONN;
   }
 
@@ -371,7 +374,7 @@ int UDPSocket::GetLocalAddress(muduo::net::InetAddress* address) const {
 int UDPSocket::GetPeerAddress(muduo::net::InetAddress* address) const {
   assert(address != NULL);
 
-  if (!is_connected()) {
+  if (!IsConnected()) {
     return ENOTCONN;
   }
 

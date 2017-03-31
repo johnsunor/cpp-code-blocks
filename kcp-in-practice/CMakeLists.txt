@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 2.6)
 
-project(tcprelay C CXX)
+project(kcp-in-practice C CXX)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Debug")
@@ -59,25 +59,18 @@ if(TCMALLOC_INCLUDE_DIR AND TCMALLOC_LIBRARY)
 endif()
 
 include_directories(
+    "."
     ${muduo_INCLUDE_DIR}
     ${ccb_INCLUDE_DIR}
     )
 
 link_directories(
+    "/usr/local/lib"
     ${muduo_LINK_DIR}
     )
 
 add_subdirectory(udp)
 add_subdirectory(kcp)
-
-add_executable(rtt_client rtt_client.cc)
-target_link_libraries(rtt_client muduo_net muduo_base z pthread)
-target_link_libraries(rtt_client tcmalloc gflags)
-target_link_libraries(rtt_client udp kcp)
-
-add_executable(rtt_server rtt_server.cc)
-target_link_libraries(rtt_server muduo_net muduo_base z pthread)
-target_link_libraries(rtt_server tcmalloc gflags)
-target_link_libraries(rtt_server udp kcp)
-
+add_subdirectory(rtt)
+add_subdirectory(relay)
 

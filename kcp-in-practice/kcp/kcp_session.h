@@ -1,3 +1,5 @@
+#ifndef KCP_SESSION_H
+#define KCP_SESSION_H
 
 #include <queue>
 
@@ -14,13 +16,14 @@
 #include <muduo/base/Timestamp.h>
 #include <muduo/net/Buffer.h>
 #include <muduo/net/TimerId.h>
+#include <muduo/net/InetAddress.h>
 
 #include "common/macros.h"
 
 #include "ikcp.h"
 
-const int kInvalidSessionId = 0;
-const int kMaxSessionId = 100000;
+const uint32_t kInvalidSessionId = 0;
+const uint32_t kMaxSessionId = 100000;
 
 namespace muduo {
 namespace net {
@@ -36,16 +39,16 @@ class KCPSessionIdInitSingleton : boost::noncopyable {
   }
 
   void InitAvailSessionIds() {
-    std::vector<int> vi;
-    for (int i = 1; i <= kMaxSessionId; ++i) {
+    std::vector<uint32_t> vi;
+    for (uint32_t i = 1; i <= kMaxSessionId; ++i) {
       vi.push_back(i);
     }
 
     ::srand(::time(NULL));
     size_t len = vi.size();
     while (len > 0) {
-      int i = rand() % len;
-      int id = vi[i];
+      uint32_t i = rand() % len;
+      uint32_t id = vi[i];
       vi[i] = vi[len - 1];
       vi[len - 1] = id;
       len--;
@@ -56,18 +59,20 @@ class KCPSessionIdInitSingleton : boost::noncopyable {
     }
   }
 
-  int GetNextSessionId() {
+  uint32_t GetNextSessionId() {
     if (avail_session_ids_.empty()) {
       return kInvalidSessionId;
     }
 
-    int id = avail_session_ids_.front();
+    uint32_t id = avail_session_ids_.front();
     avail_session_ids_.pop();
 
     return id;
   }
 
-  void ReleaseSessionId(int session_id) { avail_session_ids_.push(session_id); }
+  void ReleaseSessionId(uint32_t session_id) {
+    avail_session_ids_.push(session_id);
+  }
 
  private:
   friend muduo::Singleton<KCPSessionIdInitSingleton>;
@@ -75,7 +80,14 @@ class KCPSessionIdInitSingleton : boost::noncopyable {
   KCPSessionIdInitSingleton() { InitAvailSessionIds(); }
 
  private:
-  std::queue<int> avail_session_ids_;
+  std::queue<uint32_t> avail_session_ids_;
+};
+
+struct PACKED MetaData {
+  enum { kSyn, kAck, kPsh, kPing, kPong };
+  uint8_t kind;
+  uint32_t session_id;
+  uint32_t key;
 };
 
 struct ScopedKCPSession {
@@ -100,17 +112,10 @@ class KCPSession : boost::noncopyable,
  public:
   typedef boost::function<void(const KCPSessionPtr&, muduo::net::Buffer*)>
       MessageCallback;
-
-  typedef boost::function<void(const KCPSessionPtr&, muduo::net::Buffer*)>
+  typedef boost::function<void(const KCPSessionPtr, muduo::net::Buffer*)>
       OutputCallback;
-
   typedef boost::function<void(const KCPSessionPtr&)> CloseCallback;
-
-  struct PACKED MetaData {
-    enum { SYN, ACK, PSH, PING };
-    uint8_t kind;
-    int session_id;
-  };
+  typedef boost::function<void(const KCPSessionPtr&)> ConnectionCallback;
 
   struct Params {
     int snd_wnd;
@@ -124,27 +129,39 @@ class KCPSession : boost::noncopyable,
   explicit KCPSession(muduo::net::EventLoop* loop);
   ~KCPSession();
 
-  bool Init(int session_id, const Params& params);
+  bool Init(uint32_t session_id, uint32_t key, const Params& params);
 
   void Feed(const char* buf, size_t len);
+  void Feed(muduo::net::Buffer* buf);
 
   void Output(const char* buf, size_t len);
 
   void Send(const char* buf, size_t len);
+  void Send(muduo::net::Buffer* buf);
 
   muduo::net::EventLoop* get_loop() const { return loop_; }
 
-  int session_id() const { return session_id_; }
+  uint32_t session_id() const { return session_id_; }
+  uint32_t key() const { return key_; }
 
+  void set_connection_callback(const ConnectionCallback& cb) {
+    connection_callback_ = cb;
+  }
   void set_message_callback(const MessageCallback& cb) {
     message_callback_ = cb;
   }
-
   void set_output_callback(const OutputCallback& cb) { output_callback_ = cb; }
   void set_close_callback(const CloseCallback& cb) { close_callback_ = cb; }
 
+  void ConnectionEstablished();
+
   const boost::any& context() const { return context_; }
   void set_context(const boost::any& context) { context_ = context; }
+
+  const muduo::net::InetAddress& peer_address() const { return peer_address_; };
+  void set_peer_address(const muduo::net::InetAddress& addr) {
+    peer_address_ = addr;
+  };
 
   bool IsLinkAlive() const;
 
@@ -159,28 +176,33 @@ class KCPSession : boost::noncopyable,
  private:
   bool DoUpdate(muduo::Timestamp now);
 
-  struct TimerInfo {
-    TimerInfo() : next_flush_ms(0) {}
+  struct FlushTimer {
+    FlushTimer() : next_flush_ms(0) {}
     uint32_t next_flush_ms;
     muduo::net::TimerId timer_id;
   };
 
  private:
   muduo::net::EventLoop* const loop_;
-  int session_id_;
   ScopedKCPSessionPtr kcp_;
+  uint32_t session_id_;
+  uint32_t key_;
 
+  ConnectionCallback connection_callback_;
   MessageCallback message_callback_;
   OutputCallback output_callback_;
   CloseCallback close_callback_;
 
   muduo::net::Buffer input_buf_;
   muduo::net::Buffer output_buf_;
+  muduo::net::InetAddress peer_address_;
 
   boost::any context_;
 
-  TimerInfo timer_info_;
+  FlushTimer flush_timer_;
 };
 
 const KCPSession::Params kFastModeKCPParams = {128, 128, 1, 10, 2, 1};
 const KCPSession::Params kNormalModeKCPParams = {32, 32, 0, 100, 0, 0};
+
+#endif

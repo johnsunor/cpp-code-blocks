@@ -1,4 +1,7 @@
 
+#ifndef UDP_CLIENT_H_
+#define UDP_CLIENT_H_
+
 #include <boost/bind.hpp>
 #include <boost/function.hpp>
 #include <boost/ptr_container/ptr_list.hpp>
@@ -32,6 +35,10 @@ class UDPClient : boost::noncopyable {
 
   int Connect(const muduo::net::InetAddress& address);
 
+  void Disconnect();
+
+  bool IsConnected() const { return socket_.IsConnected(); }
+
   void Close() { socket_.Close(); }
 
   void Start();
@@ -46,10 +53,17 @@ class UDPClient : boost::noncopyable {
 
   int Write(muduo::net::Buffer* buf);
 
-  void WriteOrQueuePcket(const void* buf, size_t len);
+  void WriteOrQueuePacket(const void* buf, size_t len);
+
+  void WriteOrQueuePacket(muduo::net::Buffer* buf);
 
   void set_message_callback(const MessageCallback& cb) {
     message_callback_ = cb;
+  }
+
+  void reset_message_callback() {
+    MessageCallback cb;
+    message_callback_.swap(cb);
   }
 
   size_t max_packet_size() const { return max_packet_size_; };
@@ -103,3 +117,5 @@ class UDPClient : boost::noncopyable {
 
   boost::ptr_list<QueuedPacket> queued_packets_;
 };
+
+#endif

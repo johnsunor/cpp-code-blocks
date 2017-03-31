@@ -16,7 +16,7 @@ void UDPClient::Start() {
 }
 
 int UDPClient::Connect(const muduo::net::InetAddress& address) {
-  assert(!socket_.is_connected());
+  assert(!socket_.IsConnected());
 
   int result = socket_.Connect(address);
   if (result < 0) {
@@ -26,6 +26,20 @@ int UDPClient::Connect(const muduo::net::InetAddress& address) {
   }
 
   return result;
+}
+
+void UDPClient::Disconnect() {
+  if (channel_) {
+    channel_->disableAll();
+    channel_->remove();
+    channel_.reset();
+  }
+  if (socket_.IsConnected()) {
+    socket_.Close();
+  }
+  if (message_callback_) {
+    reset_message_callback();
+  }
 }
 
 void UDPClient::HandleRead(muduo::Timestamp receive_time) {
@@ -78,7 +92,7 @@ int UDPClient::Write(muduo::net::Buffer* buf) {
   return bytes_transferred;
 }
 
-void UDPClient::WriteOrQueuePcket(const void* buf, size_t len) {
+void UDPClient::WriteOrQueuePacket(const void* buf, size_t len) {
   assert(socket_.sockfd() != kInvalidSocket);
 
   if (IsWriteBlocked()) {
@@ -99,6 +113,11 @@ void UDPClient::WriteOrQueuePcket(const void* buf, size_t len) {
 
     HandleError();
   }
+}
+
+void UDPClient::WriteOrQueuePacket(muduo::net::Buffer* buf) {
+  WriteOrQueuePacket(buf->peek(), buf->readableBytes());
+  buf->retrieveAll();
 }
 
 void UDPClient::HandleWrite() {

@@ -100,6 +100,12 @@ void UDPServer::SendOrQueuePacket(const void* buf, size_t len,
   }
 }
 
+void UDPServer::SendOrQueuePacket(muduo::net::Buffer* buf,
+                                  const muduo::net::InetAddress& address) {
+  SendOrQueuePacket(buf->peek(), buf->readableBytes(), address);
+  buf->retrieveAll();
+}
+
 void UDPServer::HandleWrite() {
   SetWritable();
 
