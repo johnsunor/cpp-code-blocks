@@ -106,18 +106,11 @@ class Encryptor {
 
   virtual ~Encryptor();
 
-  // Initializes the encryptor using |key| and |iv|. Returns false if either the
-  // key or the initialization vector cannot be used.
-  //
-  // If |mode| is CBC, |iv| must not be empty; if it is CTR, then |iv| must be
-  // empty.
   bool Init(muduo::StringPiece cipher_name,
             muduo::StringPiece passwd,
             muduo::StringPiece iv,
             bool do_encrypt);
 
-  // Encrypts |plaintext| into |ciphertext|.  |plaintext| may only be empty if
-  // the mode is CBC.
   bool Update(muduo::StringPiece plaintext, std::string* ciphertext);
 
   bool Update(const char* plaintext, int text_size, std::string* ciphertext);

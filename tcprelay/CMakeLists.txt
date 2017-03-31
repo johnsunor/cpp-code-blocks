@@ -61,6 +61,7 @@ include_directories(
     )
 
 link_directories(
+    /usr/local/lib/
     ${muduo_LINK_DIR}
     )
 
