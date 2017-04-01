@@ -143,6 +143,7 @@ class KCPSession : boost::noncopyable,
 
   uint32_t session_id() const { return session_id_; }
   uint32_t key() const { return key_; }
+  void set_send_no_delay(bool send_no_delay) { send_no_delay_ = send_no_delay; }
 
   void set_connection_callback(const ConnectionCallback& cb) {
     connection_callback_ = cb;
@@ -165,7 +166,7 @@ class KCPSession : boost::noncopyable,
 
   bool IsLinkAlive() const;
 
-  void MaybeNeedUpdate();
+  void MaybeNeedUpdate(bool no_delay);
   void OnUpdateTimeOut();
 
   static int OnKCPOutput(const char* buf, int len, IKCPCB* kcp, void* user);
@@ -174,7 +175,11 @@ class KCPSession : boost::noncopyable,
       const boost::weak_ptr<KCPSession>& wk_kcp_session);
 
  private:
-  bool DoUpdate(muduo::Timestamp now);
+  void FlushNoDelay(uint32_t now_ms);
+
+  uint32_t UpdateTsFlush(uint32_t now_ms);
+
+  bool DoUpdate(uint32_t now_ms);
 
   struct FlushTimer {
     FlushTimer() : next_flush_ms(0) {}
@@ -187,6 +192,7 @@ class KCPSession : boost::noncopyable,
   ScopedKCPSessionPtr kcp_;
   uint32_t session_id_;
   uint32_t key_;
+  bool send_no_delay_;
 
   ConnectionCallback connection_callback_;
   MessageCallback message_callback_;
