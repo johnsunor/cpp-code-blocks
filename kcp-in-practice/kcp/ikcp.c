@@ -1,4 +1,26 @@
 //=====================================================================
+//Copyright (c) 2017 Lin Wei (skywind3000 at gmail.com)
+//
+//Permission is hereby granted, free of charge, to any person obtaining a copy
+//of this software and associated documentation files (the "Software"), to deal
+//in the Software without restriction, including without limitation the rights
+//to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+//copies of the Software, and to permit persons to whom the Software is
+//furnished to do so, subject to the following conditions:
+//
+//The above copyright notice and this permission notice shall be included in all
+//copies or substantial portions of the Software.
+//
+//THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+//SOFTWARE
+//=====================================================================
+
+//=====================================================================
 //
 // KCP - A Better ARQ Protocol Implementation
 // skywind3000 (at) gmail.com, 2010-2011
@@ -848,6 +870,40 @@ static int ikcp_wnd_unused(const ikcpcb *kcp) {
     return kcp->rcv_wnd - kcp->nrcv_que;
   }
   return 0;
+}
+
+void ikcp_fast_ack(ikcpcb *kcp) {
+  char *buffer = kcp->buffer;
+  char *ptr = buffer;
+  int count, size, i;
+  IKCPSEG seg;
+
+  seg.conv = kcp->conv;
+  seg.cmd = IKCP_CMD_ACK;
+  seg.frg = 0;
+  seg.wnd = ikcp_wnd_unused(kcp);
+  seg.una = kcp->rcv_nxt;
+  seg.len = 0;
+  seg.sn = 0;
+  seg.ts = 0;
+
+  // flush acknowledges
+  count = kcp->ackcount;
+  for (i = 0; i < count; i++) {
+    size = (int)(ptr - buffer);
+    if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
+      ikcp_output(kcp, buffer, size);
+      ptr = buffer;
+    }
+    ikcp_ack_get(kcp, i, &seg.sn, &seg.ts);
+    ptr = ikcp_encode_seg(ptr, &seg);
+  }
+
+	size = (int)(ptr - buffer);
+	if (size > 0) {
+		ikcp_output(kcp, buffer, size);
+	}
+  kcp->ackcount = 0;
 }
 
 //---------------------------------------------------------------------

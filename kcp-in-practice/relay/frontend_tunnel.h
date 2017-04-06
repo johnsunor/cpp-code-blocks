@@ -90,6 +90,8 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
         KCPSessionPtr kcp_session(new KCPSession(client_conn_->getLoop()));
         assert(kcp_session->Init(session_id, key, kFastModeKCPParams));
 
+        kcp_session->set_send_no_delay(true);
+        kcp_session->set_fast_ack(true);
         kcp_session->set_message_callback(
             boost::bind(&FrontendTunnel::OnKCPMessage, this, _1, _2));
         kcp_session->set_output_callback(

@@ -88,6 +88,7 @@ class TestServer {
         assert(kcp_session->Init(session_id, key, kFastModeKCPParams));
 
         kcp_session->set_send_no_delay(true);
+        //kcp_session->set_fast_ack(true);
         kcp_session->set_peer_address(peer_address);
         kcp_session->set_message_callback(
             boost::bind(&TestServer::OnKCPMessage, this, _1, _2));
