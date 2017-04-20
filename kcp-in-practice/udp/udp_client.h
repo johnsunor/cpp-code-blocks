@@ -27,10 +27,11 @@ class UDPClient : boost::noncopyable {
   typedef boost::function<void(muduo::net::Buffer*, muduo::Timestamp)>
       MessageCallback;
 
-  explicit UDPClient(muduo::net::EventLoop* loop)
+  explicit UDPClient(muduo::net::EventLoop* loop,
+                     size_t max_packet_size = kDefaultMaxPacketSize)
       : loop_(CHECK_NOTNULL(loop)),
-        max_packet_size_(kDefaultMaxPacketSize),
-        read_buf_(kDefaultMaxPacketSize),
+        max_packet_size_(max_packet_size),
+        read_buf_(max_packet_size + 1),
         write_blocked_(false) {}
 
   int Connect(const muduo::net::InetAddress& address);
@@ -68,17 +69,22 @@ class UDPClient : boost::noncopyable {
 
   size_t max_packet_size() const { return max_packet_size_; };
 
-  void set_max_packet_size(size_t max_packet_size) {
-    max_packet_size_ = max_packet_size;
-    read_buf_.ensureWritableBytes(max_packet_size_);
-  }
-
   int GetPeerAddress(muduo::net::InetAddress* address) const {
     return socket_.GetPeerAddress(address);
   }
 
   int GetLocalAddress(muduo::net::InetAddress* address) const {
     return socket_.GetLocalAddress(address);
+  }
+
+  void SetReceiveBufferSize(int32_t size) {
+    assert(socket_.IsConnected());
+    socket_.SetReceiveBufferSize(size);
+  }
+
+  void SetSendBufferSize(int32_t size) {
+    assert(socket_.IsConnected());
+    socket_.SetSendBufferSize(size);
   }
 
   bool IsWriteBlocked() const { return write_blocked_; }

@@ -12,10 +12,10 @@
 
 #include "frontend_tunnel.h"
 
-DEFINE_string(backend_ip, "127.0.0.1", "backend_ip");
+DEFINE_string(backend_ip, "0.0.0.0", "backend_ip");
 DEFINE_int32(backend_port, 9527, "backend_port");
-DEFINE_string(frontend_ip, "127.0.0.1", "frontend_ip");
-DEFINE_int32(frontend_port, 9528, "frontend_port");
+DEFINE_string(frontend_ip, "0.0.0.0", "frontend_ip");
+DEFINE_int32(frontend_port, 9999, "frontend_port");
 
 using namespace muduo;
 using namespace muduo::net;
@@ -46,13 +46,17 @@ class KCPRelayFrontend {
       tunnel->connect();
       all_tunnels[conn->name()] = tunnel;
     } else {
-      TunnelMap::iterator tunnel_it = all_tunnels.find(conn->name());
-      if (tunnel_it != all_tunnels.end()) {
-        tunnel_it->second->disconnect();
-        all_tunnels.erase(tunnel_it);
-      }
-
       conn->setContext(boost::any());
+      conn->getLoop()->queueInLoop(
+          boost::bind(&KCPRelayFrontend::DestoryTunnel, this, conn->name()));
+    }
+  }
+
+  void DestoryTunnel(const string& name) {
+    TunnelMap::iterator tunnel_it = all_tunnels.find(name);
+    if (tunnel_it != all_tunnels.end()) {
+      tunnel_it->second->Disconnect();
+      all_tunnels.erase(tunnel_it);
     }
   }
 
@@ -63,6 +67,7 @@ class KCPRelayFrontend {
           boost::any_cast<const KCPSessionPtr&>(conn->getContext());
       kcp_session->Send(buf);
     } else {
+      conn->shutdown();
       LOG_ERROR << "no kcp_session readableBytes: " << buf->readableBytes();
     }
   }

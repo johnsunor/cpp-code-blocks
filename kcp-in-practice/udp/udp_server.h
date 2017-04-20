@@ -90,6 +90,16 @@ class UDPServer : boost::noncopyable {
 
   void SetWriteBlocked() { write_blocked_ = true; }
 
+  void SetReceiveBufferSize(int32_t size) {
+    assert(socket_.IsConnected());
+    socket_.SetReceiveBufferSize(size);
+  }
+
+  void SetSendBufferSize(int32_t size) {
+    assert(socket_.IsConnected());
+    socket_.SetSendBufferSize(size);
+  }
+
   struct QueuedPacket {
     QueuedPacket(const void* buf, size_t len,
                  const muduo::net::InetAddress& addr)

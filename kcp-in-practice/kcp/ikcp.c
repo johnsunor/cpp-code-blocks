@@ -1,23 +1,24 @@
 //=====================================================================
-//Copyright (c) 2017 Lin Wei (skywind3000 at gmail.com)
+// Copyright (c) 2017 Lin Wei (skywind3000 at gmail.com)
 //
-//Permission is hereby granted, free of charge, to any person obtaining a copy
-//of this software and associated documentation files (the "Software"), to deal
-//in the Software without restriction, including without limitation the rights
-//to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-//copies of the Software, and to permit persons to whom the Software is
-//furnished to do so, subject to the following conditions:
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
 //
-//The above copyright notice and this permission notice shall be included in all
-//copies or substantial portions of the Software.
+// The above copyright notice and this permission notice shall be included in
+// all
+// copies or substantial portions of the Software.
 //
-//THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-//IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-//FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-//AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-//LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-//OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-//SOFTWARE
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE
 //=====================================================================
 
 //=====================================================================
@@ -46,12 +47,13 @@ const IUINT32 IKCP_RTO_NDL = 30;   // no delay min rto
 const IUINT32 IKCP_RTO_MIN = 100;  // normal min rto
 const IUINT32 IKCP_RTO_DEF = 200;
 const IUINT32 IKCP_RTO_MAX = 60000;
-const IUINT32 IKCP_CMD_PUSH = 81;  // cmd: push data
-const IUINT32 IKCP_CMD_ACK = 82;   // cmd: ack
-const IUINT32 IKCP_CMD_WASK = 83;  // cmd: window probe (ask)
-const IUINT32 IKCP_CMD_WINS = 84;  // cmd: window size (tell)
-const IUINT32 IKCP_ASK_SEND = 1;   // need to send IKCP_CMD_WASK
-const IUINT32 IKCP_ASK_TELL = 2;   // need to send IKCP_CMD_WINS
+const IUINT32 IKCP_CMD_PUSH = 81;    // cmd: push data
+const IUINT32 IKCP_CMD_ACK = 82;     // cmd: ack
+const IUINT32 IKCP_CMD_WASK = 83;    // cmd: window probe (ask)
+const IUINT32 IKCP_CMD_WINS = 84;    // cmd: window size (tell)
+const IUINT32 IKCP_ASK_SEND = 1;     // need to send IKCP_CMD_WASK
+const IUINT32 IKCP_ASK_TELL = 2;     // need to send IKCP_CMD_WINS
+const IUINT32 IKCP_FAST_RESEND = 3;  // need to send IKCP_CMD_WASK
 const IUINT32 IKCP_WND_SND = 32;
 const IUINT32 IKCP_WND_RCV = 32;
 const IUINT32 IKCP_MTU_DEF = 1400;
@@ -284,6 +286,10 @@ ikcpcb *ikcp_create(IUINT32 conv, void *user) {
   kcp->output = NULL;
   kcp->writelog = NULL;
 
+#ifdef KCP_EXPERIMENT
+  iqueue_init(&kcp->fast_resent_queue);
+  kcp->nfast_resent_que = 0;
+#endif
   return kcp;
 }
 
@@ -532,7 +538,7 @@ static void ikcp_update_ack(ikcpcb *kcp, IINT32 rtt) {
     kcp->rx_srtt = (7 * kcp->rx_srtt + rtt) / 8;
     if (kcp->rx_srtt < 1) kcp->rx_srtt = 1;
   }
-  rto = kcp->rx_srtt + _imax_(1, 4 * kcp->rx_rttval);
+  rto = kcp->rx_srtt + _imax_(kcp->interval, 4 * kcp->rx_rttval);
   kcp->rx_rto = _ibound_(kcp->rx_minrto, rto, IKCP_RTO_MAX);
 }
 
@@ -588,6 +594,11 @@ static void ikcp_parse_fastack(ikcpcb *kcp, IUINT32 sn) {
   if (_itimediff(sn, kcp->snd_una) < 0 || _itimediff(sn, kcp->snd_nxt) >= 0)
     return;
 
+#ifdef KCP_EXPERIMENT
+  IUINT32 resent =
+      (kcp->fastresend > 0) ? (IUINT32)kcp->fastresend : 0xffffffff;
+#endif
+
   for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = next) {
     IKCPSEG *seg = iqueue_entry(p, IKCPSEG, node);
     next = p->next;
@@ -595,6 +606,14 @@ static void ikcp_parse_fastack(ikcpcb *kcp, IUINT32 sn) {
       break;
     } else if (sn != seg->sn) {
       seg->fastack++;
+#ifdef KCP_EXPERIMENT
+      if (seg->fastack >= resent) {
+        iqueue_del(&seg->node);
+        kcp->nsnd_buf--;
+        kcp->nfast_resent_que++;
+        iqueue_add_tail(&seg->node, &kcp->fast_resent_queue);
+      }
+#endif
     }
   }
 }
@@ -675,7 +694,7 @@ void ikcp_parse_data(ikcpcb *kcp, IKCPSEG *newseg) {
     iqueue_add(&newseg->node, p);
     kcp->nrcv_buf++;
   } else {
-  // 重复收到
+    // 重复收到
     ikcp_segment_delete(kcp, newseg);
   }
 
@@ -694,7 +713,7 @@ void ikcp_parse_data(ikcpcb *kcp, IKCPSEG *newseg) {
       iqueue_add_tail(&seg->node, &kcp->rcv_queue);
       kcp->nrcv_que++;
       kcp->rcv_nxt++;
-    // 乱序
+      // 乱序
     } else {
       break;
     }
@@ -753,7 +772,9 @@ int ikcp_input(ikcpcb *kcp, const char *data, long size) {
       return -3;
 
     kcp->rmt_wnd = wnd;
+    // una -> rmt->rcv_nxt
     ikcp_parse_una(kcp, una);
+    // update snd_una
     ikcp_shrink_buf(kcp);
 
     if (cmd == IKCP_CMD_ACK) {
@@ -778,10 +799,11 @@ int ikcp_input(ikcpcb *kcp, const char *data, long size) {
       if (ikcp_canlog(kcp, IKCP_LOG_IN_DATA)) {
         ikcp_log(kcp, IKCP_LOG_IN_DATA, "input psh: sn=%lu ts=%lu", sn, ts);
       }
+      // 符合接收条件
       if (_itimediff(sn, kcp->rcv_nxt + kcp->rcv_wnd) < 0) {
         ikcp_ack_push(kcp, sn, ts);
 
-        // 符合接收条件
+        // new seg
         if (_itimediff(sn, kcp->rcv_nxt) >= 0) {
           seg = ikcp_segment_new(kcp, len);
           seg->conv = conv;
@@ -828,7 +850,7 @@ int ikcp_input(ikcpcb *kcp, const char *data, long size) {
   if (_itimediff(kcp->snd_una, una) > 0) {
     if (kcp->cwnd < kcp->rmt_wnd) {
       IUINT32 mss = kcp->mss;
-        // 慢启动
+      // 慢启动
       if (kcp->cwnd < kcp->ssthresh) {
         kcp->cwnd++;
         kcp->incr += mss;
@@ -872,40 +894,6 @@ static int ikcp_wnd_unused(const ikcpcb *kcp) {
   return 0;
 }
 
-void ikcp_fast_ack(ikcpcb *kcp) {
-  char *buffer = kcp->buffer;
-  char *ptr = buffer;
-  int count, size, i;
-  IKCPSEG seg;
-
-  seg.conv = kcp->conv;
-  seg.cmd = IKCP_CMD_ACK;
-  seg.frg = 0;
-  seg.wnd = ikcp_wnd_unused(kcp);
-  seg.una = kcp->rcv_nxt;
-  seg.len = 0;
-  seg.sn = 0;
-  seg.ts = 0;
-
-  // flush acknowledges
-  count = kcp->ackcount;
-  for (i = 0; i < count; i++) {
-    size = (int)(ptr - buffer);
-    if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
-      ikcp_output(kcp, buffer, size);
-      ptr = buffer;
-    }
-    ikcp_ack_get(kcp, i, &seg.sn, &seg.ts);
-    ptr = ikcp_encode_seg(ptr, &seg);
-  }
-
-	size = (int)(ptr - buffer);
-	if (size > 0) {
-		ikcp_output(kcp, buffer, size);
-	}
-  kcp->ackcount = 0;
-}
-
 //---------------------------------------------------------------------
 // ikcp_flush
 //---------------------------------------------------------------------
@@ -919,6 +907,7 @@ void ikcp_flush(ikcpcb *kcp) {
   struct IQUEUEHEAD *p;
   int change = 0;
   int lost = 0;
+  int newsegs_count = 0;
   IKCPSEG seg;
 
   // 'ikcp_update' haven't been called.
@@ -996,6 +985,8 @@ void ikcp_flush(ikcpcb *kcp) {
   cwnd = _imin_(kcp->snd_wnd, kcp->rmt_wnd);
   if (kcp->nocwnd == 0) cwnd = _imin_(kcp->cwnd, cwnd);
 
+  // RFC2581 https://tools.ietf.org/html/rfc2581
+  // D = snd.una + min(cwnd, min(snd.wnd, rwnd)) - snd.nxt
   // move data from snd_queue to snd_buf
   while (_itimediff(kcp->snd_nxt, kcp->snd_una + cwnd) < 0) {
     IKCPSEG *newseg;
@@ -1018,6 +1009,8 @@ void ikcp_flush(ikcpcb *kcp) {
     newseg->rto = kcp->rx_rto;
     newseg->fastack = 0;
     newseg->xmit = 0;
+
+    newsegs_count++;
   }
 
   // calculate resent
@@ -1048,6 +1041,13 @@ void ikcp_flush(ikcpcb *kcp) {
       lost = 1;
       // 快速重传
     } else if (segment->fastack >= resent) {
+      needsend = 1;
+      segment->xmit++;
+      segment->fastack = 0;
+      segment->resendts = current + segment->rto;
+      change++;
+      // 早期重传
+    } else if (segment->fastack > 0 && newsegs_count == 0) {
       needsend = 1;
       segment->xmit++;
       segment->fastack = 0;
@@ -1098,7 +1098,7 @@ void ikcp_flush(ikcpcb *kcp) {
     kcp->incr = kcp->cwnd * kcp->mss;
   }
 
-  // 超时重传 -> 慢启动 
+  // 超时重传 -> 慢启动
   if (lost) {
     kcp->ssthresh = cwnd / 2;
     if (kcp->ssthresh < IKCP_THRESH_MIN) kcp->ssthresh = IKCP_THRESH_MIN;
@@ -1112,12 +1112,246 @@ void ikcp_flush(ikcpcb *kcp) {
   }
 }
 
+// flush pending ack
+void ikcp_flush_ack(ikcpcb *kcp) {
+  char *buffer = kcp->buffer;
+  char *ptr = buffer;
+  int count, size, i;
+  IKCPSEG seg;
+
+  if (kcp->ackcount <= 0) return;
+
+  seg.conv = kcp->conv;
+  seg.cmd = IKCP_CMD_ACK;
+  seg.frg = 0;
+  seg.wnd = ikcp_wnd_unused(kcp);
+  seg.una = kcp->rcv_nxt;
+  seg.len = 0;
+  seg.sn = 0;
+  seg.ts = 0;
+
+  // flush acknowledges
+  count = kcp->ackcount;
+  for (i = 0; i < count; i++) {
+    size = (int)(ptr - buffer);
+    if (size + (int)IKCP_OVERHEAD > (int)kcp->mtu) {
+      ikcp_output(kcp, buffer, size);
+      ptr = buffer;
+    }
+    ikcp_ack_get(kcp, i, &seg.sn, &seg.ts);
+    ptr = ikcp_encode_seg(ptr, &seg);
+  }
+
+  size = (int)(ptr - buffer);
+  if (size > 0) {
+    ikcp_output(kcp, buffer, size);
+  }
+  kcp->ackcount = 0;
+}
+
+// flush wnd
+void ikcp_flush_wnd(ikcpcb *kcp) {
+  char *buffer = kcp->buffer;
+  char *ptr = buffer;
+  int size;
+  IKCPSEG seg;
+
+  // flush window probing commands
+  if (kcp->probe & IKCP_ASK_TELL) {
+    seg.conv = kcp->conv;
+    seg.cmd = IKCP_CMD_WINS;
+    seg.frg = 0;
+    seg.wnd = ikcp_wnd_unused(kcp);
+    seg.una = kcp->rcv_nxt;
+    seg.len = 0;
+    seg.sn = 0;
+    seg.ts = 0;
+    ptr = ikcp_encode_seg(ptr, &seg);
+    size = (int)(ptr - buffer);
+    if (size > 0) {
+      ikcp_output(kcp, buffer, size);
+    }
+    kcp->probe |= ~IKCP_ASK_TELL;
+  }
+}
+
+// send wnd ask
+void ikcp_send_wnd_ask(ikcpcb *kcp) {
+  char *buffer = kcp->buffer;
+  char *ptr = buffer;
+  int size;
+  IKCPSEG seg;
+
+  // flush window probing commands
+  if (kcp->probe & IKCP_ASK_SEND) {
+    seg.conv = kcp->conv;
+    seg.cmd = IKCP_CMD_WASK;
+    seg.frg = 0;
+    seg.wnd = ikcp_wnd_unused(kcp);
+    seg.una = kcp->rcv_nxt;
+    seg.len = 0;
+    seg.sn = 0;
+    seg.ts = 0;
+    ptr = ikcp_encode_seg(ptr, &seg);
+    size = (int)(ptr - buffer);
+    if (size > 0) {
+      ikcp_output(kcp, buffer, size);
+    }
+    kcp->probe |= ~IKCP_ASK_SEND;
+  }
+}
+
+// flush fast_resent_queue
+// flush pending data
+void ikcp_flush_snd_queue(ikcpcb *kcp, IUINT32 current) {
+  IUINT32 cwnd;
+  char *buffer = kcp->buffer;
+  char *ptr = buffer;
+  IINT32 size, need;
+  IKCPSEG *newseg;
+
+  kcp->current = current;
+  // calculate window size
+  cwnd = _imin_(kcp->snd_wnd, kcp->rmt_wnd);
+  if (kcp->nocwnd == 0) cwnd = _imin_(kcp->cwnd, cwnd);
+
+  while (_itimediff(kcp->snd_nxt, kcp->snd_una + cwnd) < 0) {
+    if (iqueue_is_empty(&kcp->snd_queue)) break;
+
+    newseg = iqueue_entry(kcp->snd_queue.next, IKCPSEG, node);
+
+    iqueue_del(&newseg->node);
+    iqueue_add_tail(&newseg->node, &kcp->snd_buf);
+    kcp->nsnd_que--;
+    kcp->nsnd_buf++;
+
+    newseg->conv = kcp->conv;
+    newseg->cmd = IKCP_CMD_PUSH;
+    newseg->wnd = ikcp_wnd_unused(kcp);
+    newseg->ts = current;
+    newseg->sn = kcp->snd_nxt++;
+    newseg->una = kcp->rcv_nxt;
+    newseg->resendts = current;
+    newseg->rto = kcp->rx_rto;
+    newseg->fastack = 0;
+    newseg->xmit = 1;
+
+    size = (IINT32)(ptr - buffer);
+    need = IKCP_OVERHEAD + newseg->len;
+
+    if (size + need > (IINT32)kcp->mtu) {
+      ikcp_output(kcp, buffer, size);
+      ptr = buffer;
+    }
+
+    ptr = ikcp_encode_seg(ptr, newseg);
+
+    if (newseg->len > 0) {
+      memcpy(ptr, newseg->data, newseg->len);
+      ptr += newseg->len;
+    }
+  }
+
+  // flash remain segments
+  size = (IINT32)(ptr - buffer);
+  if (size > 0) {
+    ikcp_output(kcp, buffer, size);
+  }
+}
+
+// flush cwnd
+void ikcp_congestion_control(ikcpcb *kcp, IUINT32 resend_type) {
+  IUINT32 cwnd = _imin_(kcp->snd_wnd, kcp->rmt_wnd);
+  if (kcp->nocwnd == 0) cwnd = _imin_(kcp->cwnd, cwnd);
+
+  // update ssthresh
+  if (resend_type == 1) {
+    IUINT32 inflight = kcp->snd_nxt - kcp->snd_una;
+    kcp->ssthresh = inflight / 2;
+    if (kcp->ssthresh < IKCP_THRESH_MIN) kcp->ssthresh = IKCP_THRESH_MIN;
+    kcp->cwnd = kcp->ssthresh + (kcp->fastresend > 0 ? kcp->fastresend : 3);
+    kcp->incr = kcp->cwnd * kcp->mss;
+  } else {
+    kcp->ssthresh = cwnd / 2;
+    if (kcp->ssthresh < IKCP_THRESH_MIN) kcp->ssthresh = IKCP_THRESH_MIN;
+    kcp->cwnd = 1;
+    kcp->incr = kcp->mss;
+  }
+
+  if (kcp->cwnd < 1) {
+    kcp->cwnd = 1;
+    kcp->incr = kcp->mss;
+  }
+}
+
+#ifdef KCP_EXPERIMENT
+
+IUINT32 ikcp_need_fast_resent(const ikcpcb *kcp) {
+  return kcp->nfast_resent_que > 0;
+}
+
+void ikcp_flush_fast_resent_queue(ikcpcb *kcp, IUINT32 current) {
+  char *buffer = kcp->buffer;
+  char *ptr = buffer;
+  IINT32 size, need;
+  IKCPSEG *seg;
+
+  kcp->current = current;
+
+  while (!iqueue_is_empty(&kcp->fast_resent_queue)) {
+    seg = iqueue_entry(kcp->fast_resent_queue.next, IKCPSEG, node);
+
+    iqueue_del(&seg->node);
+    iqueue_add_tail(&seg->node, &kcp->snd_buf);
+    kcp->nfast_resent_que--;
+    kcp->nsnd_buf++;
+
+    seg->conv = kcp->conv;
+    seg->cmd = IKCP_CMD_PUSH;
+    seg->ts = current;
+    seg->wnd = ikcp_wnd_unused(kcp);
+    seg->una = kcp->rcv_nxt;
+    seg->resendts = current + seg->rto;
+    seg->fastack = 0;
+    seg->xmit++;
+
+    size = (IINT32)(ptr - buffer);
+    need = IKCP_OVERHEAD + seg->len;
+
+    if (size + need > (IINT32)kcp->mtu) {
+      ikcp_output(kcp, buffer, size);
+      ptr = buffer;
+    }
+
+    ptr = ikcp_encode_seg(ptr, seg);
+
+    if (seg->len > 0) {
+      memcpy(ptr, seg->data, seg->len);
+      ptr += seg->len;
+    }
+  }
+
+  // flash remain segments
+  size = (IINT32)(ptr - buffer);
+  if (size > 0) {
+    ikcp_output(kcp, buffer, size);
+  }
+
+  ikcp_congestion_control(kcp, 2);
+}
+
+#endif
+
+IUINT32 ikcp_can_snd_new_seg(ikcpcb *kcp) {
+  return ikcp_nsnd_que(kcp) > 0 && ikcp_ncan_snd(kcp) > 0;
+}
+
 //---------------------------------------------------------------------
 // update state (call it repeatedly, every 10ms-100ms), or you can ask
 // ikcp_check when to call it again (without ikcp_input/_send calling).
 // 'current' - current timestamp in millisec.
 //---------------------------------------------------------------------
-void ikcp_update(ikcpcb *kcp, IUINT32 current) {
+void ikcp_update(ikcpcb *kcp, IUINT32 current, IUINT32 directly) {
   IINT32 slap;
 
   kcp->current = current;
@@ -1139,6 +1373,8 @@ void ikcp_update(ikcpcb *kcp, IUINT32 current) {
     if (_itimediff(kcp->current, kcp->ts_flush) >= 0) {
       kcp->ts_flush = kcp->current + kcp->interval;
     }
+    ikcp_flush(kcp);
+  } else if (directly) {
     ikcp_flush(kcp);
   }
 }
@@ -1180,13 +1416,75 @@ IUINT32 ikcp_check(const ikcpcb *kcp, IUINT32 current) {
     if (diff <= 0) {
       return current;
     }
-    if (diff < tm_packet) tm_packet = diff;
+    if (diff < tm_packet) {
+      tm_packet = diff;
+    }
+  }
+
+  if (kcp->rmt_wnd == 0 && kcp->probe_wait != 0) {
+    IINT32 diff = _itimediff(kcp->current, kcp->ts_probe);
+    if (diff <= 0) {
+      return current;
+    }
+    if (diff < tm_packet) {
+      tm_packet = diff;
+    }
   }
 
   minimal = (IUINT32)(tm_packet < tm_flush ? tm_packet : tm_flush);
   if (minimal >= kcp->interval) minimal = kcp->interval;
 
   return current + minimal;
+}
+
+IUINT32 ikcp_ts_interval(ikcpcb *kcp) { return kcp->interval; }
+
+IINT32 ikcp_resend_duration(ikcpcb *kcp, IUINT32 current) {
+  IUINT32 ts_flush = kcp->ts_flush;
+  IINT32 tm_flush = 0x7fffffff;
+  IINT32 tm_packet = 0x7fffffff;
+  struct IQUEUEHEAD *p;
+
+  assert(kcp->updated != 0);
+
+  if (_itimediff(current, ts_flush) >= 10000 ||
+      _itimediff(current, ts_flush) < -10000) {
+    ts_flush = current;
+  }
+
+  if (_itimediff(current, ts_flush) >= 0) {
+    return -1;
+  }
+
+  tm_flush = _itimediff(ts_flush, current);
+
+  for (p = kcp->snd_buf.next; p != &kcp->snd_buf; p = p->next) {
+    const IKCPSEG *seg = iqueue_entry(p, const IKCPSEG, node);
+    IINT32 diff = _itimediff(seg->resendts, current);
+    if (diff <= 0) {
+      return 0;
+    }
+    if (diff < tm_packet) tm_packet = diff;
+  }
+
+  if (_itimediff(tm_packet, tm_flush) < 0) {
+    return tm_packet;
+  }
+
+  return -1;
+}
+
+IUINT32 ikcp_ts_flush(ikcpcb *kcp, IUINT32 current) {
+  IUINT32 ts_flush = kcp->ts_flush;
+  IUINT32 tm_flush = ikcp_check(kcp, current);
+
+  assert(kcp->updated != 0);
+
+  if (_itimediff(tm_flush, ts_flush) < 0) {
+    kcp->ts_flush = tm_flush;
+  }
+
+  return kcp->ts_flush;
 }
 
 int ikcp_setmtu(ikcpcb *kcp, int mtu) {
@@ -1247,7 +1545,33 @@ int ikcp_wndsize(ikcpcb *kcp, int sndwnd, int rcvwnd) {
   return 0;
 }
 
-int ikcp_waitsnd(const ikcpcb *kcp) { return kcp->nsnd_buf + kcp->nsnd_que; }
+IUINT32 ikcp_updated(const ikcpcb *kcp) { return kcp->updated; }
+
+IUINT32 ikcp_waitsnd(const ikcpcb *kcp) {
+  return kcp->nsnd_buf + kcp->nsnd_que;
+}
+
+IUINT32 ikcp_nsnd_que(const ikcpcb *kcp) { return kcp->nsnd_que; }
+
+IUINT32 ikcp_nrmt_wnd(const ikcpcb *kcp) { return kcp->rmt_wnd; }
+
+IUINT32 ikcp_npending_ack(const ikcpcb *kcp) { return kcp->ackcount; }
+
+IUINT32 ikcp_ncan_snd(const ikcpcb *kcp) {
+  // D = snd.una + min(cwnd, min(snd.wnd, rwnd)) - snd.nxt
+  IUINT32 cwnd = _imin_(kcp->snd_wnd, kcp->rmt_wnd);
+  if (kcp->nocwnd == 0) cwnd = _imin_(kcp->cwnd, cwnd);
+  IINT32 diff = _itimediff(kcp->snd_una + cwnd, kcp->snd_nxt);
+  return (diff > 0) ? diff : 0;
+}
+
+IUINT32 ikcp_need_ask_tell(const ikcpcb *kcp) {
+  return (kcp->probe & IKCP_ASK_TELL);
+}
+
+IUINT32 ikcp_need_ask_send(const ikcpcb *kcp) {
+  return (kcp->probe & IKCP_ASK_SEND);
+}
 
 // read conv
 IUINT32 ikcp_getconv(const void *ptr) {

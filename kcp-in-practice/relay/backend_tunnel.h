@@ -14,6 +14,8 @@
 
 #include "kcp/kcp_session.h"
 
+#include "common/debug/stack_trace.h"
+
 class BackendTunnel : public boost::enable_shared_from_this<BackendTunnel>,
                       boost::noncopyable {
  public:
@@ -33,6 +35,7 @@ class BackendTunnel : public boost::enable_shared_from_this<BackendTunnel>,
         &BackendTunnel::OnClientConnection, shared_from_this(), _1));
     client_.setMessageCallback(boost::bind(&BackendTunnel::OnClientMessage,
                                            shared_from_this(), _1, _2, _3));
+    // client_.enableRetry();
     backend_conn_->setHighWaterMarkCallback(
         boost::bind(&BackendTunnel::OnHighWaterMarkWeak,
                     boost::weak_ptr<BackendTunnel>(shared_from_this()), kServer,
@@ -56,12 +59,13 @@ class BackendTunnel : public boost::enable_shared_from_this<BackendTunnel>,
   void teardown() {
     client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
     client_.setMessageCallback(muduo::net::defaultMessageCallback);
-    if (backend_conn_) {
-      if (!backend_conn_->getContext().empty()) {
-        const KCPSessionPtr& kcp_session =
-            boost::any_cast<const KCPSessionPtr&>(backend_conn_->getContext());
-        kcp_session->set_context(boost::any());
-      }
+    if (backend_conn_ && !backend_conn_->getContext().empty()) {
+      const KCPSessionPtr& kcp_session =
+          boost::any_cast<const KCPSessionPtr&>(backend_conn_->getContext());
+      kcp_session->FlushImmediately();
+
+      kcp_session->set_context(boost::any());
+      backend_conn_->setContext(boost::any());
       backend_conn_->shutdown();
     }
     client_conn_.reset();

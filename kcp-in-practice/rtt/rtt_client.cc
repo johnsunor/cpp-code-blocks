@@ -185,7 +185,7 @@ int main() {
   g_logLevel = muduo::Logger::INFO;
 
   EventLoop loop;
-  InetAddress server_addr(8090);
+  InetAddress server_addr("119.29.220.184", 8090);
   TestClient client(&loop, server_addr);
 
   client.Start();

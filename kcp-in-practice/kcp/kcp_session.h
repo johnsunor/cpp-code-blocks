@@ -124,6 +124,8 @@ class KCPSession : boost::noncopyable,
     int interval;
     int resend;
     int nocongestion;
+    int mtu;
+    int stream_mode;
   };
 
   explicit KCPSession(muduo::net::EventLoop* loop);
@@ -160,19 +162,25 @@ class KCPSession : boost::noncopyable,
 
   void set_close_callback(const CloseCallback& cb) { close_callback_ = cb; }
 
-  void ConnectionEstablished();
-
   const boost::any& context() const { return context_; }
   void set_context(const boost::any& context) { context_ = context; }
+
+  muduo::net::Buffer* input_buf() { return &input_buf_; }
+
+  muduo::net::Buffer* output_buf() { return &output_buf_; }
 
   const muduo::net::InetAddress& peer_address() const { return peer_address_; };
   void set_peer_address(const muduo::net::InetAddress& addr) {
     peer_address_ = addr;
   };
 
+  uint32_t PendingDataSize() const;
+
   bool IsLinkAlive() const;
 
   void OnUpdateTimeOut();
+
+  bool FlushImmediately() ;
 
   static int OnKCPOutput(const char* buf, int len, IKCPCB* kcp, void* user);
 
@@ -182,19 +190,12 @@ class KCPSession : boost::noncopyable,
  private:
   enum EventType { kFeed, kSend };
 
-  void MaybeNeedUpdate(EventType type);
+  // diff <= 2147483647
+  static int32_t TimeDiff(uint32_t l, uint32_t r) { return l - r; }
 
-  bool FlushNoDelay(uint32_t now_ms);
+  void MaybeNeedUpdate(EventType event_type);
 
-  uint32_t UpdateTsFlush(uint32_t now_ms);
-
-  bool DoUpdate(uint32_t now_ms);
-
-  struct FlushTimer {
-    FlushTimer() : next_flush_ms(0) {}
-    uint32_t next_flush_ms;
-    muduo::net::TimerId timer_id;
-  };
+  bool DoUpdate(uint32_t now_in_ms, bool directly);
 
  private:
   muduo::net::EventLoop* const loop_;
@@ -214,11 +215,9 @@ class KCPSession : boost::noncopyable,
   muduo::net::InetAddress peer_address_;
 
   boost::any context_;
-
-  FlushTimer flush_timer_;
 };
 
-const KCPSession::Params kFastModeKCPParams = {128, 128, 1, 10, 2, 1};
-const KCPSession::Params kNormalModeKCPParams = {32, 32, 0, 100, 0, 0};
+const KCPSession::Params kFastModeKCPParams = {128, 128, 1, 50, 2, 1, 1400, 0};
+const KCPSession::Params kNormalModeKCPParams = {32, 32, 0, 100, 0, 0, 1400, 1};
 
 #endif

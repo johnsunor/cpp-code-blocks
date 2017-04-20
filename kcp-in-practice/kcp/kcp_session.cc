@@ -13,7 +13,7 @@ KCPSession::KCPSession(muduo::net::EventLoop* loop)
       fast_ack_(false) {}
 
 KCPSession::~KCPSession() {
-  LOG_DEBUG << "~KCPSession #session_id: " << session_id_;
+  LOG_INFO << "~KCPSession #session_id: " << session_id_;
 }
 
 bool KCPSession::Init(uint32_t session_id, uint32_t key, const Params& params) {
@@ -28,7 +28,14 @@ bool KCPSession::Init(uint32_t session_id, uint32_t key, const Params& params) {
   ScopedKCPSessionPtr scoped_kcp(new ScopedKCPSession(kcp));
   ikcp_setoutput(kcp, KCPSession::OnKCPOutput);
 
+  kcp->stream = params.stream_mode;
+
   int rv = ikcp_wndsize(kcp, params.snd_wnd, params.rcv_wnd);
+  if (rv < 0) {
+    return false;
+  }
+
+  rv = ikcp_setmtu(kcp, params.mtu);
   if (rv < 0) {
     return false;
   }
@@ -46,6 +53,48 @@ bool KCPSession::Init(uint32_t session_id, uint32_t key, const Params& params) {
   return true;
 }
 
+void KCPSession::Feed(muduo::net::Buffer* buf) {
+  Feed(buf->peek(), buf->readableBytes());
+  buf->retrieveAll();
+}
+
+void KCPSession::Output(const char* buf, size_t len) {
+  output_buf_.ensureWritableBytes(sizeof(MetaData) + len);
+  output_buf_.appendInt8(MetaData::kPsh);
+  output_buf_.appendInt32(session_id_);
+  output_buf_.appendInt32(key_);
+  output_buf_.append(buf, len);
+  output_callback_(shared_from_this(), &output_buf_);
+}
+
+void KCPSession::Send(const char* buf, size_t len) {
+  assert(session_id_ != kInvalidSessionId);
+  assert(kcp_->get() != NULL);
+
+  int result = ikcp_send(kcp_->get(), buf, len);
+  if (result < 0) {
+    LOG_ERROR << "ikcp_send data failed, len = " << len;
+  }
+
+  MaybeNeedUpdate(kSend);
+}
+
+void KCPSession::Send(muduo::net::Buffer* buf) {
+  Send(buf->peek(), buf->readableBytes());
+  buf->retrieveAll();
+}
+
+uint32_t KCPSession::PendingDataSize() const {
+  assert(kcp_->get());
+  return ikcp_waitsnd(kcp_->get());
+}
+
+bool KCPSession::IsLinkAlive() const {
+  assert(kcp_->get());
+
+  return (kcp_->get()->state == 0);
+}
+
 void KCPSession::Feed(const char* buf, size_t len) {
   assert(session_id_ != kInvalidSessionId);
   assert(kcp_->get());
@@ -61,11 +110,9 @@ void KCPSession::Feed(const char* buf, size_t len) {
     LOG_ERROR << "kcp header cmd invalid";
   }
 
-  MaybeNeedUpdate(kFeed);
-
   while (true) {
     int data_size = ikcp_peeksize(kcp_->get());
-    if (data_size < 0) {
+    if (data_size <= 0) {
       break;
     }
 
@@ -74,135 +121,74 @@ void KCPSession::Feed(const char* buf, size_t len) {
 
     input_buf_.ensureWritableBytes(data_size);
     int rn = ikcp_recv(kcp_->get(), input_buf_.beginWrite(), data_size);
-    if (UNLIKELY(rn < 0)) {
-      LOG_FATAL << "impossible: rn < 0";
+    if (UNLIKELY(rn <= 0)) {
+      LOG_FATAL << "impossible: rn <= 0";
     }
     input_buf_.hasWritten(rn);
 
-    if (message_callback_) {
-      message_callback_(shared_from_this(), &input_buf_);
+    message_callback_(shared_from_this(), &input_buf_);
+  }
+
+  MaybeNeedUpdate(kFeed);
+}
+
+void KCPSession::MaybeNeedUpdate(EventType event_type) {
+  assert(session_id_ != kInvalidSessionId);
+  assert(kcp_->get());
+
+  if (UNLIKELY(ikcp_updated(kcp_->get()) == 0)) {
+    muduo::Timestamp now_ts = muduo::Timestamp::now();
+    uint32_t now_in_ms = (now_ts.microSecondsSinceEpoch() / 1000) & 0xFFFFFFFFu;
+    if (!DoUpdate(now_in_ms, false)) {
+      return;
     }
-    input_buf_.retrieveAll();
-  }
-}
 
-void KCPSession::Feed(muduo::net::Buffer* buf) {
-  Feed(buf->peek(), buf->readableBytes());
-  buf->retrieveAll();
-}
+    uint32_t next_ts_flush = ikcp_ts_flush(kcp_->get(), now_in_ms);
+    uint32_t diff = TimeDiff(next_ts_flush, now_in_ms) * 1000;
 
-void KCPSession::Output(const char* buf, size_t len) {
-  output_buf_.ensureWritableBytes(sizeof(MetaData) + len);
-  output_buf_.appendInt8(MetaData::kPsh);
-  output_buf_.appendInt32(session_id_);
-  output_buf_.appendInt32(key_);
-  output_buf_.append(buf, len);
-  output_callback_(shared_from_this(), &output_buf_);
-  output_buf_.retrieveAll();
-  // output_callback_(shared_from_this(), buf, len);
-}
+    muduo::Timestamp new_expired_ts(now_ts.microSecondsSinceEpoch() + diff);
+    loop_->runAt(new_expired_ts,
+                 boost::bind(&KCPSession::OnUpdateTimeOutWeak,
+                             boost::weak_ptr<KCPSession>(shared_from_this())));
+  } else if (event_type == kFeed) {
+    uint32_t npending_ack = ikcp_npending_ack(kcp_->get());
+    if (npending_ack > 0) {
+      if (fast_ack_ || npending_ack >= 2) {
+        ikcp_flush_ack(kcp_->get());
+      }
 
-bool KCPSession::FlushNoDelay(uint32_t now_ms) {
-  assert(session_id_ != kInvalidSessionId);
-  assert(kcp_->get() != NULL);
+#ifdef KCP_EXPERIMENT
+      muduo::Timestamp now_ts = muduo::Timestamp::now();
+      uint32_t now_in_ms =
+          (now_ts.microSecondsSinceEpoch() / 1000) & 0xFFFFFFFFu;
+      if (ikcp_can_snd_new_seg(kcp_->get())) {
+        ikcp_flush_snd_queue(kcp_->get(), now_in_ms);
+      }
 
-  kcp_->get()->current = now_ms;
-  ikcp_flush(kcp_->get());
-
-  if (!IsLinkAlive()) {
-    LOG_DEBUG << "kcp session #" << session_id_ << " not alive";
-    if (close_callback_) {
-      close_callback_(shared_from_this());
+      if (ikcp_need_fast_resent(kcp_->get())) {
+        ikcp_flush_fast_resent_queue(kcp_->get(), now_in_ms);
+      }
+#endif
     }
-    return false;
+    if (ikcp_need_ask_tell(kcp_->get())) {
+      ikcp_flush_wnd(kcp_->get());
+    }
+  } else if (event_type == kSend) {
+    if (send_no_delay_ && ikcp_can_snd_new_seg(kcp_->get())) {
+      muduo::Timestamp now_ts = muduo::Timestamp::now();
+      uint32_t now_in_ms =
+          (now_ts.microSecondsSinceEpoch() / 1000) & 0xFFFFFFFFu;
+      ikcp_flush_snd_queue(kcp_->get(), now_in_ms);
+    }
   }
-  return true;
 }
 
-void KCPSession::Send(const char* buf, size_t len) {
-  assert(session_id_ != kInvalidSessionId);
-  assert(kcp_->get() != NULL);
-
-  // not in stream mode
-  int result = ikcp_send(kcp_->get(), buf, len);
-  if (result < 0) {
-    LOG_ERROR << "ikcp_send data failed, len = " << len;
-  }
-
-  MaybeNeedUpdate(kSend);
-}
-
-void KCPSession::Send(muduo::net::Buffer* buf) {
-  Send(buf->peek(), buf->readableBytes());
-  buf->retrieveAll();
-}
-
-bool KCPSession::IsLinkAlive() const {
-  assert(kcp_->get());
-
-  return (kcp_->get()->state == 0);
-}
-
-uint32_t KCPSession::UpdateTsFlush(uint32_t now_ms) {
-  assert(session_id_ != kInvalidSessionId);
-  assert(kcp_->get());
-
-  uint32_t old_ts_flush = kcp_->get()->ts_flush;
-  uint32_t new_ts_flush = ikcp_check(kcp_->get(), now_ms);
-  if (old_ts_flush < now_ms || new_ts_flush < old_ts_flush) {
-    kcp_->get()->ts_flush = new_ts_flush;
-  }
-
-  return kcp_->get()->ts_flush;
-}
-
-void KCPSession::MaybeNeedUpdate(EventType type) {
-  assert(session_id_ != kInvalidSessionId);
-  assert(kcp_->get());
+bool KCPSession::FlushImmediately() {
+  LOG_INFO << "PendingDataSize: " << PendingDataSize();
 
   muduo::Timestamp now_ts = muduo::Timestamp::now();
-  uint32_t now_ms = now_ts.microSecondsSinceEpoch() / 1000;
-  uint32_t next_flush_ms = UpdateTsFlush(now_ms);
-  bool need_register = false;
-
-  if (next_flush_ms <= now_ms) {
-    if (flush_timer_.next_flush_ms == 0) {
-      if (!DoUpdate(now_ms)) {
-        return;
-      }
-      next_flush_ms = UpdateTsFlush(now_ms);
-      need_register = true;
-    }
-  } else {
-    if (type == kFeed) {
-      if (fast_ack_) {
-        ikcp_fast_ack(kcp_->get());
-      }
-    } else if (send_no_delay_) {
-      if (!FlushNoDelay(now_ms)) {
-        return;
-      }
-    }
-  }
-
-  if (!need_register) {
-    if (flush_timer_.next_flush_ms == 0) {
-      need_register = true;
-    } else if (next_flush_ms < flush_timer_.next_flush_ms) {
-      loop_->cancel(flush_timer_.timer_id);
-      need_register = true;
-    }
-  }
-
-  if (need_register) {
-    muduo::Timestamp new_expired_ts(now_ts.microSecondsSinceEpoch() +
-                                    (next_flush_ms - now_ms) * 1000);
-    flush_timer_.next_flush_ms = next_flush_ms;
-    flush_timer_.timer_id = loop_->runAt(
-        new_expired_ts,
-        boost::bind(&KCPSession::OnUpdateTimeOutWeak,
-                    boost::weak_ptr<KCPSession>(shared_from_this())));
-  }
+  uint32_t now_in_ms = (now_ts.microSecondsSinceEpoch() / 1000) & 0xFFFFFFFFu;
+  return DoUpdate(now_in_ms, true);
 }
 
 void KCPSession::OnUpdateTimeOut() {
@@ -210,30 +196,29 @@ void KCPSession::OnUpdateTimeOut() {
   assert(kcp_->get());
 
   muduo::Timestamp now_ts = muduo::Timestamp::now();
-  uint32_t now_ms = now_ts.microSecondsSinceEpoch() / 1000;
-  bool still_alive = DoUpdate(now_ms);
+  uint32_t now_in_ms = (now_ts.microSecondsSinceEpoch() / 1000) & 0xFFFFFFFFu;
+  bool still_alive = DoUpdate(now_in_ms, false);
   if (!still_alive) {
     return;
   }
 
-  uint32_t next_flush_ms = UpdateTsFlush(now_ms);
-  muduo::Timestamp new_expired_ts(now_ts.microSecondsSinceEpoch() +
-                                  (next_flush_ms - now_ms) * 1000);
-  flush_timer_.next_flush_ms = next_flush_ms;
-  flush_timer_.timer_id = loop_->runAt(
-      new_expired_ts,
-      boost::bind(&KCPSession::OnUpdateTimeOutWeak,
-                  boost::weak_ptr<KCPSession>(shared_from_this())));
+  uint32_t next_ts_flush = ikcp_ts_flush(kcp_->get(), now_in_ms);
+  int32_t diff = TimeDiff(next_ts_flush, now_in_ms) * 1000;
+
+  muduo::Timestamp new_expired_ts(now_ts.microSecondsSinceEpoch() + diff);
+  loop_->runAt(new_expired_ts,
+               boost::bind(&KCPSession::OnUpdateTimeOutWeak,
+                           boost::weak_ptr<KCPSession>(shared_from_this())));
 }
 
-bool KCPSession::DoUpdate(uint32_t now_ms) {
+bool KCPSession::DoUpdate(uint32_t now_in_ms, bool directly) {
   assert(session_id_ != kInvalidSessionId);
   assert(kcp_->get() != NULL);
 
-  ikcp_update(kcp_->get(), now_ms);
+  ikcp_update(kcp_->get(), now_in_ms, directly);
 
   if (!IsLinkAlive()) {
-    LOG_DEBUG << "kcp session #" << session_id_ << " not alive";
+    LOG_INFO << "kcp session #" << session_id_ << " not alive";
     if (close_callback_) {
       close_callback_(shared_from_this());
     }

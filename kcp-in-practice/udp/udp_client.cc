@@ -43,22 +43,26 @@ void UDPClient::Disconnect() {
 }
 
 void UDPClient::HandleRead(muduo::Timestamp receive_time) {
-  assert(socket_.sockfd() != kInvalidSocket);
   assert(read_buf_.writableBytes() > 0);
 
-  int bytes_transferred =
-      socket_.Read(read_buf_.beginWrite(), read_buf_.writableBytes());
-  if (bytes_transferred > 0) {
-    read_buf_.hasWritten(bytes_transferred);
-    if (message_callback_) {
-      message_callback_(&read_buf_, receive_time);
-    }
+  if (socket_.IsConnected()) {
+    int bytes_transferred =
+        socket_.Read(read_buf_.beginWrite(), read_buf_.writableBytes());
+    if (bytes_transferred < 0) {
+      errno = bytes_transferred;
+      LOG_SYSERR << "UDPClient::handleRead";
+      HandleError();
+    } else if (muduo::implicit_cast<size_t>(bytes_transferred) <=
+               max_packet_size_) {
+      read_buf_.hasWritten(bytes_transferred);
+      if (message_callback_) {
+        message_callback_(&read_buf_, receive_time);
+      }
 
-    read_buf_.retrieveAll();
-  } else if (bytes_transferred < 0) {
-    errno = bytes_transferred;
-    LOG_SYSERR << "UDPClient::handleRead";
-    HandleError();
+      read_buf_.retrieveAll();
+    } else {
+      LOG_WARN << "received packet size is too large, datagram has been truncated";
+    }
   }
 }
 

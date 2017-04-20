@@ -12,16 +12,18 @@
 #include "udp/udp_server.h"
 #include "kcp/kcp_session.h"
 
+#include "common/debug/stack_trace.h"
+
 #include "backend_tunnel.h"
 
 using namespace muduo;
 using namespace muduo::net;
 
-DEFINE_string(target_ip, "127.0.0.1", "target_ip");
+DEFINE_string(target_ip, "0.0.0.0", "target_ip");
 DEFINE_int32(target_port, 8080, "target_port");
-DEFINE_string(tcp_server_ip, "127.0.0.1", "tcp_server_ip");
+DEFINE_string(tcp_server_ip, "0.0.0.0", "tcp_server_ip");
 DEFINE_int32(tcp_server_port, 9527, "tcp_server_port");
-DEFINE_string(udp_server_ip, "127.0.0.1", "udp_server_ip");
+DEFINE_string(udp_server_ip, "0.0.0.0", "udp_server_ip");
 DEFINE_int32(udp_server_port, 9528, "udp_server_port");
 // DEFINE_int32(thread_num, 1, "server thread num");
 
@@ -102,8 +104,8 @@ class KCPRelayBackend {
         KCPSessionPtr kcp_session(new KCPSession(conn->getLoop()));
         assert(kcp_session->Init(session_id, key, kFastModeKCPParams));
 
-        kcp_session->set_send_no_delay(true);
-        kcp_session->set_fast_ack(true);
+        //kcp_session->set_send_no_delay(true);
+        //kcp_session->set_fast_ack(true);
         kcp_session->set_peer_address(peer_address);
         kcp_session->set_message_callback(
             boost::bind(&KCPRelayBackend::OnKCPMessage, this, _1, _2));
@@ -244,7 +246,7 @@ int main(int argc, char* argv[]) {
            << ", FLAGS_udp_server_ip: " << FLAGS_udp_server_ip
            << ", FLAGS_udp_server_port: " << FLAGS_udp_server_port;
 
-  muduo::g_logLevel = muduo::Logger::WARN;
+  muduo::g_logLevel = muduo::Logger::ERROR;
 
   EventLoop loop;
   InetAddress tcp_server_addr(FLAGS_tcp_server_ip, FLAGS_tcp_server_port);

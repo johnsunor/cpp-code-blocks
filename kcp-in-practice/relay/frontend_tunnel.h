@@ -15,6 +15,8 @@
 #include "udp/udp_client.h"
 #include "kcp/kcp_session.h"
 
+#include "common/debug/stack_trace.h"
+
 const size_t kSessionInitFrameLen = sizeof(uint16_t) + 2 * sizeof(uint32_t);
 
 class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
@@ -34,7 +36,7 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
 
   void setup() {
     client_.setConnectionCallback(boost::bind(
-        &FrontendTunnel::onClientConnection, shared_from_this(), _1));
+        &FrontendTunnel::OnClientConnection, shared_from_this(), _1));
     client_.setMessageCallback(boost::bind(&FrontendTunnel::OnClientMessage,
                                            shared_from_this(), _1, _2, _3));
     frontend_conn_->setHighWaterMarkCallback(
@@ -49,7 +51,8 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
 
   void OnClientMessage(const muduo::net::TcpConnectionPtr& conn,
                        muduo::net::Buffer* buf, muduo::Timestamp) {
-    LOG_INFO << "conn: " << conn->name() << " recv bytes: " << buf->readableBytes();
+    LOG_INFO << "conn: " << conn->name()
+             << " recv bytes: " << buf->readableBytes();
     if (buf->readableBytes() == kSessionInitFrameLen) {
       uint16_t port = muduo::implicit_cast<uint16_t>(buf->readInt16());
       uint32_t session_id = muduo::implicit_cast<int>(buf->readInt32());
@@ -70,8 +73,10 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
       udp_client_.WriteOrQueuePacket(reinterpret_cast<const char*>(&data),
                                      sizeof(data));
       retry_timer_.timer_id = conn->getLoop()->runAfter(
-          kRetryInterval, boost::bind(&FrontendTunnel::OnSynTimedOutWeak,
-                                      shared_from_this(), session_id, key));
+          kRetryInterval,
+          boost::bind(&FrontendTunnel::OnSynTimeOutWeak,
+                      boost::weak_ptr<FrontendTunnel>(shared_from_this()),
+                      session_id, key));
     } else {
       LOG_ERROR << "unexpected message len: " << buf->readableBytes();
     }
@@ -90,8 +95,8 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
         KCPSessionPtr kcp_session(new KCPSession(client_conn_->getLoop()));
         assert(kcp_session->Init(session_id, key, kFastModeKCPParams));
 
-        kcp_session->set_send_no_delay(true);
-        kcp_session->set_fast_ack(true);
+        // kcp_session->set_send_no_delay(true);
+        // kcp_session->set_fast_ack(true);
         kcp_session->set_message_callback(
             boost::bind(&FrontendTunnel::OnKCPMessage, this, _1, _2));
         kcp_session->set_output_callback(
@@ -129,36 +134,48 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
 
   void connect() { client_.connect(); }
 
-  void disconnect() {
-    client_.disconnect();
+  void Disconnect() {
+    if (client_conn_ && !client_conn_->getContext().empty()) {
+      const KCPSessionPtr& kcp_session =
+          boost::any_cast<const KCPSessionPtr&>(client_conn_->getContext());
+      kcp_session->FlushImmediately();
+    }
+
     udp_client_.Disconnect();
+    client_.disconnect();
   }
 
  private:
-  void teardown() {
+  void Teardown() {
+    if (client_conn_ && !client_conn_->getContext().empty()) {
+      const KCPSessionPtr& kcp_session =
+          boost::any_cast<const KCPSessionPtr&>(client_conn_->getContext());
+      kcp_session->FlushImmediately();
+    }
+
     client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
     client_.setMessageCallback(muduo::net::defaultMessageCallback);
     if (frontend_conn_) {
       frontend_conn_->setContext(boost::any());
       frontend_conn_->shutdown();
     }
+
     client_conn_->setContext(boost::any());
     client_conn_.reset();
-
     udp_client_.Disconnect();
   }
 
-  void onClientConnection(const muduo::net::TcpConnectionPtr& conn) {
+  void OnClientConnection(const muduo::net::TcpConnectionPtr& conn) {
     LOG_INFO << (conn->connected() ? "UP" : "DOWN");
     if (conn->connected()) {
       conn->setTcpNoDelay(true);
       client_conn_ = conn;
     } else {
-      teardown();
+      Teardown();
     }
   }
 
-  void OnSynTimedOut(uint32_t session_id, uint32_t key) {
+  void OnSynTimeOut(uint32_t session_id, uint32_t key) {
     if (client_conn_ && udp_client_.IsConnected() &&
         retry_timer_.retry_times++ < kMaxRetryTimes) {
       const MetaData data = {MetaData::kSyn,
@@ -167,17 +184,19 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
       udp_client_.WriteOrQueuePacket(reinterpret_cast<const char*>(&data),
                                      sizeof(data));
       retry_timer_.timer_id = client_conn_->getLoop()->runAfter(
-          kRetryInterval, boost::bind(&FrontendTunnel::OnSynTimedOutWeak,
-                                      shared_from_this(), session_id, key));
+          kRetryInterval,
+          boost::bind(&FrontendTunnel::OnSynTimeOutWeak,
+                      boost::weak_ptr<FrontendTunnel>(shared_from_this()),
+                      session_id, key));
     }
   }
 
-  static void OnSynTimedOutWeak(
+  static void OnSynTimeOutWeak(
       const boost::weak_ptr<FrontendTunnel>& wk_frontend_tunnel,
       uint32_t session_id, uint32_t key) {
     boost::shared_ptr<FrontendTunnel> tunnel = wk_frontend_tunnel.lock();
     if (tunnel) {
-      tunnel->OnSynTimedOut(session_id, key);
+      tunnel->OnSynTimeOut(session_id, key);
     }
   }
 
@@ -188,16 +207,19 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
     if (udp_client_.IsConnected()) {
       udp_client_.WriteOrQueuePacket(buf);
     } else {
-      LOG_WARN << "udp_client has disconnected";
+      LOG_WARN << "udp_client has disconnected, session_id: "
+               << kcp_session->session_id()
+               << ", pending data size: " << kcp_session->PendingDataSize()
+               << ", buf size: " << buf->readableBytes();
     }
   }
 
   enum ServerClient { kServer, kClient };
 
-  void onHighWaterMark(ServerClient which,
+  void OnHighWaterMark(ServerClient which,
                        const muduo::net::TcpConnectionPtr& conn,
                        size_t bytes_to_sent) {
-    LOG_INFO << (which == kServer ? "server" : "client") << " onHighWaterMark "
+    LOG_INFO << (which == kServer ? "server" : "client") << " OnHighWaterMark "
              << conn->name() << " bytes " << bytes_to_sent;
 
     if (which == kServer) {
@@ -223,7 +245,7 @@ class FrontendTunnel : public boost::enable_shared_from_this<FrontendTunnel>,
       size_t bytes_to_sent) {
     boost::shared_ptr<FrontendTunnel> tunnel = wkFrontendTunnel.lock();
     if (tunnel) {
-      tunnel->onHighWaterMark(which, conn, bytes_to_sent);
+      tunnel->OnHighWaterMark(which, conn, bytes_to_sent);
     }
   }
 
