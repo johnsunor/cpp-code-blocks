@@ -32,7 +32,9 @@
 
 连接的建立（SYN - SYN - ACK）整体类似于 TCP 中的三路握手（SYN - SYNACK - ACK），正常的连接建立成功需要一个 RTT，如果某一路分节丢失 client 端或 server 端会定时重传，重传达到一定次数之后会放弃握手，连接建立失败。server 端收到 SYN 分节后在响应 client 端之前会记录一个 pending session（待完成握手的 session）类似于 TCP 中的半连接（TCP 中有半连接队列维护半连接，并有队列长度限制，可由内核参数 net.ipv4.tcp_max_syn_backlog 设置），握手完成后 client 端和 server 端会分别创建 KCPSession 对象，即此时双方连接建立成功，client 端的 session 会由KCPClient 维护并定时向 server 端发送 PING 分节保持活跃。server 端的 session 会通过 unordered_map 统一维护，并定时检测 session 的状态。对于 server 端来说并没有类似于 TCP 中的全连接队列（accept，net.core.somaxconn）的概念。
 
-3). KCPSession 连接的断开比较特殊，这里并没有模仿 TCP 那样经过四路握手来断开连接，当前实现中弱化了连接主动断开的概念，可以减少设计的复杂度。KCPSession 中的 Close 接口时只是执行 slient close 并不会主动通知对端，对端可以通过 PING 或 RST 分节间接的检测到 session 的断开。对于 TCP 来说，连接的状态会由内核维护，即时用户层程序崩溃了，os 也会自动处理四路握手和对端协议栈通信，而基于 UDP 在用户层面的实现则不行。对于连接断开的检测实现中主要是通过 PING-PONG 交互来检测的。对于应用层来说，决定什么时候断开连接并可靠的通知到对端，比较好的方法是使用应用层级别的通知，比如接收端可以通过应用层级别的 ACK 来通知发送端数据已经接受完毕，可以执行后续的处理（比如关闭连接）。实现中 server 端会维护一个 time_wait_session_map_ 里面会将连接断开后的 session id 缓存一段时间，避免后续短时间内新建立的 session 和之前的 session 出现串话。
+3）. KCPSession 连接的断开比较特殊，这里并没有模仿 TCP 那样经过四路握手来断开连接，当前实现中弱化了连接主动断开的概念，可以减少设计的复杂度。KCPSession 中的 Close 接口时只是执行 slient close 并不会主动通知对端，对端可以通过 PING 或 RST 分节间接的检测到 session 的断开。对于 TCP 来说，连接的状态会由内核维护，即时用户层程序崩溃了，os 也会自动处理四路握手和对端协议栈通信，而基于 UDP 在用户层面的实现则不行。对于连接断开的检测实现中主要是通过 PING-PONG 交互来检测的。对于应用层来说，决定什么时候断开连接并可靠的通知到对端，比较好的方法是使用应用层级别的通知，比如接收端可以通过应用层级别的 ACK 来通知发送端数据已经接受完毕，可以执行后续的处理（比如关闭连接）。实现中 server 端会维护一个 time_wait_session_map_ 里面会将连接断开后的 session id 缓存一段时间，避免后续短时间内新建立的 session 和之前的 session 出现串话。
+
+4）. 对于 UDP 套接字来说，通过设定套接字选项 IP_RECVERR 可以接收异步错误（asynchronous error），对于收到的 ICMP 错误消息，这里实现中默认行为只是打印相关日志并在相关 session 中记录 pending error 不会立刻关闭 session，等后续通过重传失败达到一定次数上限才会关闭 session。另外，实现中用户层也可以通过注册错误处理接口进行特定处理，对于客户端有时可以通过检测到服务端端口不可达错误后作出快速的调整。在 TCP 里面如果在通信过程中有收到 ICMP 错误消息，也会暂时先忽略掉，丢失的分节会进行重传过，重传一定次数之后可能会通知网络层更新路由，然后等累计重传失败达到一定次数后会进行放弃，此时应用层可能通过 errno 或 SO_ERROR 获取到相关错误提示。
 
 ### 基本使用
 ```cpp

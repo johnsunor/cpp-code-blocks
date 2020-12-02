@@ -285,7 +285,6 @@ void KCPClient::HandleError() {
   msg.msg_controllen = sizeof(buf);
   msg.msg_flags = 0;
 
-  bool error_received = false;
   while (true) {
     if (!socket_->IsValidSocket()) {
       return;
@@ -325,9 +324,12 @@ void KCPClient::HandleError() {
           error_message_callback_(*cmsg);
         } else if (serr->ee_origin == SO_EE_ORIGIN_ICMP ||
                    serr->ee_origin == SO_EE_ORIGIN_ICMP6) {
-          error_received = true;
           KCPPublicHeader public_header;
-          if (!public_header.ReadFrom(data, rc)) {
+          if (public_header.ReadFrom(data, rc) && session_) {
+            PendingError pending_error = {.type = serr->ee_type,
+                                          .code = serr->ee_code};
+            session_->set_pending_error(pending_error);
+          } else {
             LOG_ERROR << "HandleError read public header failed";
           }
           LOG_ERROR << "received icmp error: " << serr->ee_errno
@@ -342,10 +344,6 @@ void KCPClient::HandleError() {
         }
       }
     }
-  }
-
-  if (error_received) {
-    ResetSession();
   }
 }
 

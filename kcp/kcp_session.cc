@@ -113,6 +113,12 @@ void KCPSession::Close(bool last_flush) {
     FlushTxQueue();
   }
 
+  if (pending_error_.type > 0) {
+    LOG_WARN << "session: " << session_id_
+             << " closed with pending error type: " << pending_error_.type
+             << ", code: " << pending_error_.code;
+  }
+
   OnConnectionEvent(false);
 }
 
@@ -135,9 +141,6 @@ void KCPSession::UpdateConnectionState() {
   }
 
   if (!ikcp_is_alive(kcp_.get())) {
-    LOG_ERROR << "session: " << session_id_
-              << " aborted with pending error type: " << pending_error_.type
-              << ", code: " << pending_error_.code;
     Close();
     return;
   }

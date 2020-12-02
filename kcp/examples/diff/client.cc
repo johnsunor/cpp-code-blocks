@@ -1,7 +1,7 @@
 #include <stdio.h>
-#include <algorithm>
-#include <cstdint>
 #include <unistd.h>
+#include <algorithm>
+#include <sstream>
 #include <vector>
 
 #include <muduo/base/Logging.h>
@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
       vector<size_t> vi;
 
       vs.reserve(n);
-      vi.reserve(msg.size());
+      vi.reserve(msg.size() + 1);
 
       for (size_t i = 0; i < msg.size(); ++i) {
         vi.push_back(i);
@@ -63,16 +63,20 @@ int main(int argc, char* argv[]) {
         swap(vi[i], vi[t]);
       }
 
-      sort(vi.begin(), vi.end());
+      sort(vi.begin(), vi.begin() + n);
 
       vi[n] = msg.size();
 
       size_t size = 0;
+      ostringstream os;
       for (size_t i = 0; i < n; ++i) {
         size_t new_size = vi[i + 1] - vi[i];
         size += new_size;
         vs.emplace_back(msg.substr(vi[i], new_size));
+        os << "[" << vi[i] << ", " << vi[i] + new_size << ") ";
       }
+      os << "[0, " << msg.size() << ")";
+      // LOG_WARN << os.str();
 
       assert(size == msg.size());
 
