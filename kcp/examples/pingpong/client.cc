@@ -23,6 +23,9 @@ int main(int argc, char* argv[]) {
     uint32_t block_size = static_cast<uint32_t>(atoi(argv[3]));
     uint32_t timeout = static_cast<uint32_t>(atoi(argv[4]));
 
+    assert(block_size > 0);
+    assert(timeout > 0);
+
     uint64_t total_bytes_read = 0;
     uint64_t total_bytes_write = 0;
     uint64_t total_messages_read = 0;
@@ -45,12 +48,19 @@ int main(int argc, char* argv[]) {
 
             LOG_WARN << total_bytes_read << " total bytes read";
             LOG_WARN << total_messages_read << " total messages read";
-            LOG_WARN << static_cast<double>(total_bytes_read) /
-                            static_cast<double>(total_messages_read)
-                     << " average message size";
-            LOG_WARN << static_cast<double>(total_bytes_read) /
-                            (timeout * 1024 * 1024)
-                     << " MiB/s throughput";
+
+            if (total_messages_read > 0) {
+              LOG_WARN << static_cast<double>(total_bytes_read) /
+                              static_cast<double>(total_messages_read)
+                       << " average message size";
+            }
+
+            if (timeout > 0) {
+              LOG_WARN << static_cast<double>(total_bytes_read) /
+                              (timeout * 1024 * 1024)
+                       << " MiB/s throughput";
+            }
+
             session->loop()->quit();
           }
         });

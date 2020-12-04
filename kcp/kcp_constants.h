@@ -4,13 +4,13 @@
 
 #pragma GCC diagnostic ignored "-Wunused"
 
-const int kMaxPacketSize = 1400;  // <= 1500 - 20(ip) - 8(udp) - 24(kcp)
+const int kMaxPacketSize = 1400;  // <= 1500 - 60(ip 20 + 40) - 8(udp)
 
 const int kDefaultMTUSize = 1400;  // <= kMaxPacketSize
 
 const int kSocketReceiveBuffer = 1000 * kMaxPacketSize;  // ~1MB
 
-const int kSocketSendBuffer = 100 * kMaxPacketSize;  // ~100 KB
+const int kSocketSendBuffer = 32 * kMaxPacketSize;  // ~32 KB
 
 const int kNumPacketsPerRead = 16;  // <= 16 * kMaxPacketSize
 

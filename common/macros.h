@@ -13,14 +13,34 @@
 
 #include <features.h>  // For __GNUC_PREREQ
 
+#if defined(_M_X64) || defined(__x86_64__)
+#define ARCH_CPU_X86_FAMILY 1
+#define ARCH_CPU_X86_64 1
+#define ARCH_CPU_64_BITS 1
+#define ARCH_CPU_LITTLE_ENDIAN 1
+#define ARCH_WORD_BIT 16
+#elif defined(_M_IX86) || defined(__i386__)
+#define ARCH_CPU_X86_FAMILY 1
+#define ARCH_CPU_X86 1
+#define ARCH_CPU_32_BITS 1
+#define ARCH_CPU_LITTLE_ENDIAN 1
+#define ARCH_WORD_BIT 32
+#endif
+
+// https://gcc.gnu.org/onlinedocs/gcc/C-Extensions.html#C-Extensions
 // https://gcc.gnu.org/onlinedocs/gcc/Alternate-Keywords.html#Alternate-Keywords
 // The keywords asm, typeof and inline are not available in programs compiled
 // with -ansi or -std.
 #define asm __asm__
 #define typeof __typeof__
-#define inline __inline__
+//#define inline __inline__
+//#define volatile __volatile__
 
 #define ALLOW_UNUSED __attribute__((unused))
+#define UNUSED(v) ((void)(v));
+
+template <bool>
+struct CompileAssert {};
 
 #define COMPILE_ASSERT(expr, msg) \
   typedef CompileAssert<(bool(expr))> msg[bool(expr) ? 1 : -1] ALLOW_UNUSED
@@ -29,23 +49,40 @@ template <typename T>
 inline void ignore_result(const T&) {}
 
 template <typename T, size_t N>
-char(&ArraySizeHelper(T(&array)[N]))[N];
+char (&ArraySizeHelper(T (&array)[N]))[N];
 
 // safe arraysize
 #define arraysize(array) (sizeof(ArraySizeHelper(array)))
 
+#if defined(NDEBUG)
+
 #define HANDLE_EINTR(x)                                     \
   ({                                                        \
-    typeof(x) eintr_wrapper_result;                         \
+    decltype(x) eintr_wrapper_result;                       \
     do {                                                    \
       eintr_wrapper_result = (x);                           \
     } while (eintr_wrapper_result == -1 && errno == EINTR); \
     eintr_wrapper_result;                                   \
   })
 
+#else
+
+#define HANDLE_EINTR(x)                                      \
+  ({                                                         \
+    int eintr_wrapper_counter = 0;                           \
+    decltype(x) eintr_wrapper_result;                        \
+    do {                                                     \
+      eintr_wrapper_result = (x);                            \
+    } while (eintr_wrapper_result == -1 && errno == EINTR && \
+             eintr_wrapper_counter++ < 100);                 \
+    eintr_wrapper_result;                                    \
+  })
+
+#endif  // NDEBUG
+
 #define IGNORE_EINTR(x)                                   \
   ({                                                      \
-    typeof(x) eintr_wrapper_result;                       \
+    decltype(x) eintr_wrapper_result;                     \
     do {                                                  \
       eintr_wrapper_result = (x);                         \
       if (eintr_wrapper_result == -1 && errno == EINTR) { \
@@ -54,12 +91,6 @@ char(&ArraySizeHelper(T(&array)[N]))[N];
     } while (0);                                          \
     eintr_wrapper_result;                                 \
   })
-
-// A macro to disallow the copy constructor and operator= functions
-// This should be used in the private: declarations for a class
-#define DISALLOW_COPY_AND_ASSIGN(TypeName) \
-  TypeName(const TypeName&);               \
-  void operator=(const TypeName&)
 
 #define ALIGNOF(type) __alignof__(type)
 
@@ -73,9 +104,8 @@ char(&ArraySizeHelper(T(&array)[N]))[N];
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
 // https://gcc.gnu.org/wiki/Visibility
-// If __GNUC_PREREQ(4, 0) is true, then it means the compiler is GCC version 4.0
-// or
-// later, and hence supports the new features.
+// If __GNUC_PREREQ(4, 0) is true, then it means the compiler is GCC
+// version 4.0 or later, and hence supports the new features.
 #if __GNUC_PREREQ(4, 0)
 #define DLL_PUBLIC __attribute__((visibility("default")))
 #define DLL_LOCAL __attribute__((visibility("hidden")))
@@ -84,24 +114,35 @@ char(&ArraySizeHelper(T(&array)[N]))[N];
 #define DLL_LOCAL
 #endif
 
-// All the error names specified by POSIX.1 must have distinct values, with the
-// exception of EAGAIN and EWOULDBLOCK, which may be the same.
+// All the error names specified by POSIX.1 must have distinct values,
+// with the exception of EAGAIN and EWOULDBLOCK, which may be the same.
 #define IS_EAGAIN(error) \
   (((error) == EAGAIN || (error) == EWOULDBLOCK) ? true : false)
 
-// GCC 4.7 supports explicit virtual overrides when C++11 support is enabled.
+// GCC 4.7 supports explicit virtual overrides when C++11 support is
+// enabled.
 #if __GNUC_PREREQ(4, 7) && __cplusplus >= 201103L
 #define OVERRIDE override
 #define FINAL final
+
+// A macro to disallow the copy constructor and operator= functions
+// This should be used in the private: declarations for a class
+#define DISALLOW_COPY_AND_ASSIGN(TypeName) \
+  TypeName(const TypeName&) = delete;      \
+  void operator=(const TypeName&) = delete
+
 #else
 #define OVERRIDE
 #define FINAL
+
+// A macro to disallow the copy constructor and operator= functions
+// This should be used in the private: declarations for a class
+#define DISALLOW_COPY_AND_ASSIGN(TypeName) \
+  TypeName(const TypeName&);               \
+  void operator=(const TypeName&)
+
 #endif
 
 #define NOINLINE __attribute__((noinline))
-
-#define IPV4_PRINTABLE_FORMAT(IP)                                    \
-  (((IP) >> 0) & 0xff), (((IP) >> 8) & 0xff), (((IP) >> 16) & 0xff), \
-      (((IP) >> 24) & 0xff)
 
 #endif  // COMMON_MACROS_H_

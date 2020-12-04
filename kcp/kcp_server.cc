@@ -386,8 +386,9 @@ void KCPServer::HandleError() {
 }
 
 bool KCPServer::GenerateSessionId(uint32_t* session_id) const {
-  uint32_t rand_id = 0;
+  assert(session_id != nullptr);
 
+  uint32_t rand_id = 0;
   for (int i = 0; i < kServerMaxGenSessionIdTryTimes; ++i) {
     if (!URandom::GetInstance().RandBytes(&rand_id, sizeof(uint32_t))) {
       continue;
