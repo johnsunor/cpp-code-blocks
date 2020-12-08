@@ -13,7 +13,7 @@ int main(int argc, char* argv[]) {
   using namespace muduo::net;
 
   if (argc != 5) {
-    fprintf(stderr, "Usage: client <host_ip> <port> <block_size> <timeout>\n");
+    fprintf(stderr, "Usage: client <ip> <port> <block_size> <timeout>\n");
   } else {
     LOG_INFO << "pid = " << getpid() << ", tid = " << CurrentThread::tid();
     Logger::setLogLevel(Logger::WARN);

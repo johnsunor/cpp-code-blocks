@@ -5,7 +5,7 @@ const dgram = require('dgram');
 
 function main() {  
   if (process.argv.length != 4) {
-    console.error(`Usage: node ${process.argv[1]} <host> <port>`);
+    console.error(`Usage: node ${process.argv[1]} <ip> <port>`);
     process.exit(0);
   }
 
@@ -15,7 +15,7 @@ function main() {
     return r;
   };
 
-  const address = process.argv[2];
+  const ip = process.argv[2];
   const port = getInt(process.argv[3], 1024, 65535);
 
   const server = dgram.createSocket({
@@ -32,7 +32,7 @@ function main() {
     server.send(msg, rinfo.port, rinfo.address);
   });
 
-  server.bind(port, address);
+  server.bind(port, ip);
 }
 
 main()

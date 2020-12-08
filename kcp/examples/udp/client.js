@@ -6,7 +6,7 @@ const dgram = require('dgram');
 
 function main() {
   if (process.argv.length != 6) {
-    console.error(`Usage: node ${process.argv[1]} <address> <port> <blockSize> <timeout>`);
+    console.error(`Usage: node ${process.argv[1]} <ip> <port> <blockSize> <timeout>`);
     process.exit(0);
   }
 
@@ -16,7 +16,7 @@ function main() {
     return r;
   };
 
-  const address = process.argv[2];
+  const ip = process.argv[2];
   const port = getInt(process.argv[3], 1024, 65535);
   const blockSize = getInt(process.argv[4], 1, 60 * 1024);
   const timeout = getInt(process.argv[5], 1, 5 * 60);
@@ -26,7 +26,7 @@ function main() {
     type: 'udp4'
   });
 
-  client.connect(port, address, (error) => {
+  client.connect(port, ip, (error) => {
     if (error) {
       console.error(`Error: ${error.message}`);
       process.exit(0);
