@@ -1,5 +1,7 @@
-#include <stdio.h>
 #include <unistd.h>
+
+#include <stdio.h>
+
 #include <algorithm>
 #include <sstream>
 #include <vector>
@@ -11,7 +13,6 @@
 
 #include "kcp_callbacks.h"
 #include "kcp_client.h"
-#include "kcp_constants.h"
 #include "kcp_session.h"
 #include "urandom.h"
 

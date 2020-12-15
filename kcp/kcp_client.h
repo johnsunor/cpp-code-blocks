@@ -14,7 +14,6 @@
 #include "common/macros.h"
 
 #include "kcp_callbacks.h"
-#include "kcp_constants.h"
 #include "kcp_packets.h"
 
 namespace muduo {

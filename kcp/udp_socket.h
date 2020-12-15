@@ -2,13 +2,18 @@
 #ifndef UDP_SOCKET_H_
 #define UDP_SOCKET_H_
 
-#include <assert.h>
+#include <netinet/in.h>
 
 #include <memory>
 
-#include <muduo/net/InetAddress.h>
-
 #include "common/macros.h"
+
+namespace muduo {
+namespace net {
+
+class InetAddress;
+};
+};  // namespace muduo
 
 struct SockaddrStorage {
   SockaddrStorage();

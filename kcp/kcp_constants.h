@@ -4,6 +4,9 @@
 
 #pragma GCC diagnostic ignored "-Wunused"
 
+// internal linkage
+// https://en.cppreference.com/w/cpp/language/storage_duration#Linkage
+
 const int kMaxPacketSize = 1400;  // <= 1500 - 60(ip 20 + 40) - 8(udp)
 
 const int kDefaultMTUSize = 1400;  // <= kMaxPacketSize
@@ -40,7 +43,7 @@ const double kClientSessionIdleSeconds = 120.0;  // 120s
 
 const double kClientMaxReconnectDelay = 3.0;  // 3s
 
-const double kClientPingInterval = 5.0;  // 4s
+const double kClientPingInterval = 5.0;  // 5s
 
 const int kMaxAncillaryDataLength = 1024;
 

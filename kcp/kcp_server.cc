@@ -22,7 +22,6 @@
 #include "common/macros.h"
 
 #include "kcp_callbacks.h"
-#include "kcp_constants.h"
 #include "kcp_packets.h"
 #include "kcp_session.h"
 #include "udp_socket.h"
