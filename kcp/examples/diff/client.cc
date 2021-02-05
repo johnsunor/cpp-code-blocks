@@ -5,6 +5,7 @@
 #include <sstream>
 #include <vector>
 
+#include <muduo/base/CurrentThread.h>
 #include <muduo/base/Logging.h>
 #include <muduo/net/Buffer.h>
 #include <muduo/net/EventLoop.h>
@@ -96,7 +97,7 @@ void SendNextMsg(const KCPSessionPtr& session) {
   for (const auto& m : msgs) {
     session->Write(m.data(), m.size());
     // 10ms
-    ::usleep(10000);
+    muduo::CurrentThread::sleepUsec(10000);
   }
 }
 

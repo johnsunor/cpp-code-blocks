@@ -38,25 +38,25 @@ void ChildSigalarmHandler(int) { g_child_timeout = 1; }
 //}
 
 void RunParent() {
-  LOG_INFO << "parent pid: " << getpid();
+  LOG_INFO << "parent pid: " << ::getpid();
 
   ::close(g_pipes[1]);
 
-  signal(SIGPIPE, SIG_IGN);
+  ::signal(SIGPIPE, SIG_IGN);
 
   struct sigaction sa;
 
-  sigemptyset(&sa.sa_mask);
+  ::sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
   sa.sa_handler = ParentSigalarmHandler;
-  sigaction(SIGALRM, &sa, nullptr);
+  ::sigaction(SIGALRM, &sa, nullptr);
 
-  sigemptyset(&sa.sa_mask);
+  ::sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
   sa.sa_handler = ParentSigchldHandler;
-  sigaction(SIGCHLD, &sa, nullptr);
+  ::sigaction(SIGCHLD, &sa, nullptr);
 
-  unsigned int left_seconds = alarm(g_timeout_sec + 5);
+  unsigned int left_seconds = ::alarm(g_timeout_sec + 5);
   ASSERT_EXIT(left_seconds == 0);
 
 #define TIMEOUT_BREAK(x)        \
@@ -103,20 +103,20 @@ void RunParent() {
 }
 
 void RunChild() {
-  LOG_INFO << "child pid: " << getpid();
+  LOG_INFO << "child pid: " << ::getpid();
 
   ::close(g_pipes[0]);
 
-  signal(SIGPIPE, SIG_IGN);
+  ::signal(SIGPIPE, SIG_IGN);
 
   struct sigaction sa;
 
-  sigemptyset(&sa.sa_mask);
+  ::sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
   sa.sa_handler = ChildSigalarmHandler;
-  sigaction(SIGALRM, &sa, nullptr);
+  ::sigaction(SIGALRM, &sa, nullptr);
 
-  unsigned int left_seconds = alarm(g_timeout_sec);
+  unsigned int left_seconds = ::alarm(g_timeout_sec);
   ASSERT_EXIT(left_seconds == 0);
 
   char buf[g_message_size];
@@ -186,7 +186,7 @@ int main(int argc, char* argv[]) {
       ::socketpair(AF_UNIX, socket_type | SOCK_CLOEXEC, 0, g_pipes));
   ASSERT_EXIT(result == 0);
 
-  g_chpid = fork();
+  g_chpid = ::fork();
   ASSERT_EXIT(g_chpid >= 0);
 
   if (g_chpid > 0) {
