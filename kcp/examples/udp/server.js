@@ -3,9 +3,11 @@
 const assert = require('assert');
 const dgram = require('dgram');
 
+const logger = console;
+
 function main() {  
   if (process.argv.length != 4) {
-    console.error(`Usage: node ${process.argv[1]} <ip> <port>`);
+    logger.error(`Usage: node ${process.argv[1]} <ip> <port>`);
     process.exit(0);
   }
 
@@ -23,7 +25,7 @@ function main() {
   });
 
   server.on('error', (error) => {
-    console.log(`Error: ${error.message}`);
+    logger.info(`Error: ${error.message}`);
     process.exit(0);
   });
 

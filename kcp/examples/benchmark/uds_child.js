@@ -13,7 +13,7 @@ const timeoutSeonds = Number(process.argv[3]);
 
 let message = '';
 for (let i = 0; i < messageSize; ++i) {
-  message += i % 128;
+  message += String.fromCharCode(i % 128);
 }
 
 let totalBytesRead = 0;
@@ -28,8 +28,9 @@ process.send(message);
 
 const runTimeoutMs = timeoutSeonds * 1000;
 setTimeout(() => {
-  logger.info(`totalBytesRead: ${totalBytesRead}\n` +
-    `totalMessagesRead: ${totalMessagesRead}\n` +
+  logger.info(`${totalBytesRead} total bytes read\n` +
+    `${totalMessagesRead} total messages read\n` +
+    `${totalBytesRead / Math.max(totalMessagesRead, 1)} average message size\n` +
     `${totalBytesRead / (timeoutSeonds * 1024 * 1024)} MiB/s throughput`);
   process.exit(0);
 }, runTimeoutMs);

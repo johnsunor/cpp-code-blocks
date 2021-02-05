@@ -36,6 +36,9 @@ void TestAddress() {
       muduo::net::InetAddress("ff01::1", 5050, true)));
   ASSERT_EXIT(UDPSocket::IsAddressMulticast(
       muduo::net::InetAddress("ff02::1", 5050, true)));
+  // normal
+  ASSERT_EXIT(UDPSocket::IsAddressMulticast(
+      muduo::net::InetAddress("ff80::fe3:fe9a:4ca3", 5050, true)));
   // expected false
   ASSERT_EXIT(!UDPSocket::IsAddressMulticast(
       muduo::net::InetAddress("fe80::f816:3eff:feee:70b", 5050, true)));
@@ -66,12 +69,12 @@ void TestMessage() {
   auto channel =
       std::make_unique<muduo::net::Channel>(&loop, receiver_socket->sockfd());
 
-  uint32_t num_message_received = 0;
+  uint32_t num_messages_received = 0;
   channel->setReadCallback([&](auto) {
-    ++num_message_received;
     char buf[64];
     int len = ERROR_EXIT(receiver_socket->Read(buf, sizeof(buf)));
     LOG_INFO << "received message: " << std::string(buf, len);
+    ++num_messages_received;
   });
   channel->enableReading();
 
@@ -92,12 +95,13 @@ void TestMessage() {
   });
 
   loop.runAfter(end_id + 5, [&] {
-    ASSERT_EXIT(num_message_received == end_id);
-    LOG_INFO << "TestMessage passed";
+    ASSERT_EXIT(num_messages_received == end_id);
     loop.quit();
   });
 
   loop.loop();
+
+  LOG_INFO << "TestMessage passed";
 }
 
 int main() {

@@ -19,7 +19,7 @@ int main(int argc, char* argv[]) {
     muduo::Logger::setLogLevel(muduo::Logger::WARN);
 
     const char* ip = argv[1];
-    uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
+    const uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
     ASSERT_EXIT(port > 1023);
 
     muduo::net::InetAddress address(ip, port);

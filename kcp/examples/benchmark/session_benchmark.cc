@@ -199,8 +199,8 @@ class SessionBenchmark final {
 
     closed_ = true;
     std::atomic<int> num_closed_sessions{0};
-    int num_sessons = static_cast<int>(sessions_.size());
-    for (int i = 0; i < num_sessons; ++i) {
+    const int num_sessions = static_cast<int>(sessions_.size());
+    for (int i = 0; i < num_sessions; ++i) {
       auto loop = thread_pool_->getLoopForHash(i);
       loop->runInLoop([=, &num_closed_sessions] {
         channels_[i]->disableAll();
@@ -211,7 +211,7 @@ class SessionBenchmark final {
     }
 
     // spin
-    while (num_closed_sessions != num_sessons)
+    while (num_closed_sessions != num_sessions)
       muduo::CurrentThread::sleepUsec(100);
   }
 
@@ -247,17 +247,17 @@ class SessionBenchmark final {
 int main(int argc, char* argv[]) {
   if (argc != 6) {
     fprintf(stderr,
-            "Usage: %s <num_sessons> <num_threads> <message_size> <mtu> "
+            "Usage: %s <num_sessions> <num_threads> <message_size> <mtu> "
             "<timeout_sec>\n",
             argv[0]);
     return 0;
   }
 
-  int num_sessions = atoi(argv[1]);
-  int num_threads = atoi(argv[2]);
-  int message_size = atoi(argv[3]);
-  int mtu = atoi(argv[4]);
-  double timeout_sec = atof(argv[5]);
+  const int num_sessions = atoi(argv[1]);
+  const int num_threads = atoi(argv[2]);
+  const int message_size = atoi(argv[3]);
+  const int mtu = atoi(argv[4]);
+  const double timeout_sec = atof(argv[5]);
   ASSERT_EXIT(num_sessions > 0 && num_sessions <= 10 &&
               (num_sessions & 0x01) == 0);
   ASSERT_EXIT(num_threads >= 0 && num_threads <= 10);

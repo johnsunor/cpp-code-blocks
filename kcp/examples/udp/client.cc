@@ -11,39 +11,38 @@
 #include "udp_socket.h"
 
 int main(int argc, char* argv[]) {
-  using namespace muduo;
-  using namespace muduo::net;
-
   if (argc != 5) {
     fprintf(stderr, "Usage: client <ip> <port> <block_size> <timeout>\n");
   } else {
-    LOG_INFO << "pid = " << getpid() << ", tid = " << CurrentThread::tid();
-    Logger::setLogLevel(Logger::WARN);
+    LOG_INFO << "pid = " << getpid()
+             << ", tid = " << muduo::CurrentThread::tid();
+    muduo::Logger::setLogLevel(muduo::Logger::WARN);
 
     const char* ip = argv[1];
-    uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
-    uint32_t block_size = static_cast<uint32_t>(atoi(argv[3]));
-    uint32_t timeout = static_cast<uint32_t>(atoi(argv[4]));
+    const uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
+    const uint32_t block_size = static_cast<uint32_t>(atoi(argv[3]));
+    const uint32_t timeout = static_cast<uint32_t>(atoi(argv[4]));
 
+    ASSERT_EXIT(port > 1023);
     ASSERT_EXIT(block_size > 0);
     ASSERT_EXIT(timeout > 0);
 
-    string message;
+    std::string message;
     for (uint32_t i = 0; i < block_size; ++i) {
       message.push_back(static_cast<char>(i % 128));
     }
 
-    EventLoop loop;
-    UDPSocket socket;
-    InetAddress address(ip, port);
+    muduo::net::EventLoop loop;
+    muduo::net::InetAddress address(ip, port);
 
+    UDPSocket socket;
     ERROR_EXIT(socket.Connect(address));
 
     uint64_t total_bytes_read = 0;
     uint64_t total_bytes_write = 0;
     uint64_t total_messages_read = 0;
-    Channel channel(&loop, socket.sockfd());
-    channel.setReadCallback([&](Timestamp) {
+    muduo::net::Channel channel(&loop, socket.sockfd());
+    channel.setReadCallback([&](auto) {
       char buf[64 * 1024];
       int result = ERROR_EXIT(socket.Read(buf, sizeof(buf)));
 

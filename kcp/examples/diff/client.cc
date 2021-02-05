@@ -11,9 +11,9 @@
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/InetAddress.h>
 
-#include <kcp_constants.h>
 #include "kcp_callbacks.h"
 #include "kcp_client.h"
+#include "kcp_constants.h"
 #include "kcp_session.h"
 #include "log_util.h"
 #include "urandom.h"
@@ -140,10 +140,10 @@ int main(int argc, char* argv[]) {
     muduo::Logger::setLogLevel(muduo::Logger::WARN);
 
     const char* ip = argv[1];
-    uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
-    uint32_t count = static_cast<uint32_t>(atoi(argv[3]));
+    const uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
+    const uint32_t count = static_cast<uint32_t>(atoi(argv[3]));
 
-    ASSERT_EXIT(port >= 1024);
+    ASSERT_EXIT(port > 1023);
     ASSERT_EXIT(count >= 1);
 
     g_msg_id = 0;

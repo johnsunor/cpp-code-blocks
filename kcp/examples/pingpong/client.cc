@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 
 #include <muduo/base/Logging.h>
@@ -19,12 +20,11 @@ int main(int argc, char* argv[]) {
     muduo::Logger::setLogLevel(muduo::Logger::WARN);
 
     const char* ip = argv[1];
-    int port = atoi(argv[2]);
-    int block_size = atoi(argv[3]);
-    double timeout_sec = atof(argv[4]);
+    const uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
+    const int block_size = atoi(argv[3]);
+    const double timeout_sec = atof(argv[4]);
 
-    ASSERT_EXIT(ip != nullptr);
-    ASSERT_EXIT(port > 1023 && port < 65535);
+    ASSERT_EXIT(port > 1023);
     ASSERT_EXIT(block_size > 0 && block_size < 1024 * 1024);
     ASSERT_EXIT(timeout_sec > 0 && timeout_sec < 10 * 60);
 
@@ -39,7 +39,7 @@ int main(int argc, char* argv[]) {
     }
 
     muduo::net::EventLoop loop;
-    muduo::net::InetAddress address(ip, static_cast<uint16_t>(port));
+    muduo::net::InetAddress address(ip, port);
 
     KCPClient client(&loop);
     client.set_connection_callback(

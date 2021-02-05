@@ -11,29 +11,27 @@
 #include "udp_socket.h"
 
 int main(int argc, char* argv[]) {
-  using namespace muduo;
-  using namespace muduo::net;
-
   if (argc != 3) {
-    fprintf(stderr, "Usage: server <ip> <port>\n");
+    fprintf(stderr, "Usage: %s <ip> <port>\n", argv[0]);
   } else {
-    LOG_INFO << "pid = " << getpid() << ", tid = " << CurrentThread::tid();
-    Logger::setLogLevel(Logger::WARN);
+    LOG_INFO << "pid = " << getpid()
+             << ", tid = " << muduo::CurrentThread::tid();
+    muduo::Logger::setLogLevel(muduo::Logger::WARN);
 
     const char* ip = argv[1];
-    uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
+    const uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
     ASSERT_EXIT(port > 1023);
 
-    EventLoop loop;
-    UDPSocket socket;
-    InetAddress address(ip, port);
+    muduo::net::EventLoop loop;
+    muduo::net::InetAddress address(ip, port);
 
+    UDPSocket socket;
     ERROR_EXIT(socket.Bind(address));
 
-    Channel channel(&loop, socket.sockfd());
-    channel.setReadCallback([&](Timestamp) {
+    muduo::net::Channel channel(&loop, socket.sockfd());
+    channel.setReadCallback([&](auto) {
       char buf[64 * 1024];
-      InetAddress peer_address;
+      muduo::net::InetAddress peer_address;
       int result = ERROR_EXIT(socket.RecvFrom(buf, sizeof(buf), &peer_address));
 
       ERROR_EXIT(socket.SendTo(buf, result, peer_address));

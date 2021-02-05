@@ -4,9 +4,11 @@ const assert = require('assert');
 const crypto = require('crypto');
 const dgram = require('dgram');
 
+const logger = console;
+
 function main() {
   if (process.argv.length != 6) {
-    console.error(`Usage: node ${process.argv[1]} <ip> <port> <blockSize> <timeout>`);
+    logger.error(`Usage: node ${process.argv[1]} <ip> <port> <blockSize> <timeoutSeonds>`);
     process.exit(0);
   }
 
@@ -19,7 +21,7 @@ function main() {
   const ip = process.argv[2];
   const port = getInt(process.argv[3], 1024, 65535);
   const blockSize = getInt(process.argv[4], 1, 60 * 1024);
-  const timeout = getInt(process.argv[5], 1, 5 * 60);
+  const timeoutSeonds = getInt(process.argv[5], 1, 5 * 60);
   const message = crypto.randomBytes(blockSize);
 
   const client = dgram.createSocket({
@@ -28,35 +30,36 @@ function main() {
 
   client.connect(port, ip, (error) => {
     if (error) {
-      console.error(`Error: ${error.message}`);
+      logger.error(`Error: ${error.message}`);
       process.exit(0);
     }
     client.send(message);
   });
 
-  let totalReadBytes = 0;
-  let totalWriteBytes = 0;
+  let totalBytesRead = 0;
+  let totalBytesWrite = 0;
   let totalMessagesRead = 0;
   client.on('message', (msg, rinfo) => {
-    totalReadBytes += rinfo.size;
-    totalWriteBytes += rinfo.size;
+    totalBytesRead += rinfo.size;
+    totalBytesWrite += rinfo.size;
     ++totalMessagesRead;
     client.send(msg);
   });
 
   client.on('error', (error) => {
-    console.error(`Error: ${error.message}`);
+    logger.error(`Error: ${error.message}`);
     process.exit(0);
   });
 
+  const runTimeoutMs = timeoutSeonds * 1000;
   setTimeout(() => {
-    console.log(`${totalReadBytes} total bytes read`);
-    console.log(`${totalWriteBytes} total bytes write`);
-    console.log(`${totalMessagesRead} total messages read`);
-    console.log(`${totalReadBytes / Math.max(totalMessagesRead, 1)} average message size`);
-    console.log(`${totalReadBytes / (timeout * 1024 * 1024)} MiB/s throughput`);
+    logger.info(`${totalBytesRead} total bytes read`);
+    logger.info(`${totalBytesWrite} total bytes write`);
+    logger.info(`${totalMessagesRead} total messages read`);
+    logger.info(`${totalBytesRead / Math.max(totalMessagesRead, 1)} average message size`);
+    logger.info(`${totalBytesRead / (timeoutSeonds * 1024 * 1024)} MiB/s throughput`);
     process.exit(0);
-   }, timeout * 1000);
+   }, runTimeoutMs);
 }
 
 main();
