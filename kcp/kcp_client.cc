@@ -2,8 +2,6 @@
 #include "kcp_client.h"
 
 #include <linux/errqueue.h>
-#include <zconf.h>
-#include <zlib.h>
 
 #include <string.h>
 
@@ -349,33 +347,57 @@ void KCPClient::HandleError() {
 void KCPClient::SendPacket(uint8_t packet_type, uint32_t session_id) {
   assert(socket_->IsValidSocket());
 
-  KCPPublicHeader public_header;
-
-  public_header.packet_type = packet_type;
-  public_header.session_id = session_id;
-
-  char buf[kMaxPacketSize];
-  if (!public_header.WriteTo(buf, sizeof(buf))) {
-    LOG_ERROR << "SendPacket write to buffer failed";
+  char buf[KCPPublicHeader::kPublicHeaderLength];
+  KCPPendingSendPacket packet(buf, sizeof(buf));
+  KCPPendingSendPacket::ErrorCode result =
+      packet.WritePublicHeader(packet_type, session_id);
+  if (result != KCPPendingSendPacket::SUCCESS) {
+    LOG_ERROR << "WritePublicHeader failed, packet_type: " << packet_type
+              << ", session_id: " << session_id;
     return;
   }
 
-  size_t packet_length = KCPPublicHeader::kPublicHeaderLength;
-  public_header.checksum = static_cast<uint32_t>(
-      ::adler32(1, reinterpret_cast<const Bytef*>(buf + 4),
-                static_cast<uInt>(packet_length - 4)));
-  if (!public_header.WriteChecksum(buf, sizeof(buf))) {
-    return;
-  }
-
-  int rc = socket_->Write(buf, packet_length);
+  int rc = socket_->Write(buf, sizeof(buf));
   if (rc < 0) {
     int saved_errno = -rc;
-    LOG_ERROR << "SendPacket failed, public header: " << public_header
+    LOG_ERROR << "Writer failed, packet_type: " << packet_type
+              << ", session_id: " << session_id
               << ", server_address: " << server_address_.toIpPort()
               << ", error: " << saved_errno
               << ", detail: " << muduo::strerror_tl(saved_errno);
   }
+}
+
+bool KCPClient::InitializeSession(KCPSessionPtr& session, uint32_t session_id) {
+  KCPSession::Params params = kFastModeKCPParams;
+  params.head_room = KCPPublicHeader::kPublicHeaderLength;
+
+  session->set_connection_callback(connection_callback_);
+  session->set_message_callback(message_callback_);
+  session->set_write_complete_callback(write_complete_callback_);
+  // session->set_high_water_mark_callback(high_water_mark_callback_);
+  session->set_output_callback([this](void* data, size_t len,
+                                      uint32_t curr_session_id,
+                                      const muduo::net::InetAddress& address) {
+    KCPPendingSendPacket pending_send_packet(static_cast<char*>(data), len);
+    KCPPendingSendPacket::ErrorCode result =
+        pending_send_packet.WritePublicHeader(DATA_PACKET, curr_session_id);
+    if (result != KCPPendingSendPacket::SUCCESS) {
+      LOG_ERROR << "WritePublicHeader failed, session_id: " << curr_session_id
+                << ", address: " << address.toIpPort();
+      return;
+    }
+
+    SendDataToWire(pending_send_packet, address);
+  });
+
+  if (!session->Initialize(session_id, server_address_, params)) {
+    LOG_ERROR << "Initialize failed, session_id :" << session_id
+              << ", server_address: " << server_address_.toIpPort();
+    return false;
+  }
+
+  return true;
 }
 
 void KCPClient::ProcessSynPacket(const KCPPublicHeader& public_header,
@@ -409,20 +431,10 @@ void KCPClient::ProcessSynPacket(const KCPPublicHeader& public_header,
     return;
   }
 
-  auto params = kFastModeKCPParams;
-  params.head_room = KCPPublicHeader::kPublicHeaderLength;
-
   // client can send data packet in "connection_callback_" as ack packet
   auto session = std::make_shared<KCPSession>(loop_);
-  session->set_connection_callback(connection_callback_);
-  session->set_message_callback(message_callback_);
-  session->set_write_complete_callback(write_complete_callback_);
-  session->set_output_callback([this](const void* data, size_t len,
-                                      const muduo::net::InetAddress& address) {
-    SendDataToWire(data, len, address);
-  });
-  if (!session->Initialize(session_id, server_address_, params)) {
-    LOG_ERROR << "session initialize failed, session_id :" << session_id
+  if (!InitializeSession(session, session_id)) {
+    LOG_ERROR << "InitializeSession failed, session_id :" << session_id
               << ", server_address: " << server_address_.toIpPort();
     return;
   }
@@ -501,20 +513,12 @@ void KCPClient::ProcessDataPacket(const KCPPublicHeader& public_header,
 void KCPClient::ProcessPacket(KCPReceivedPacket& packet) {
   assert(packet.length() <= kMaxPacketSize);
 
-  // decrypt
   KCPPublicHeader public_header;
-  if (!packet.ReadPublicHeader(&public_header)) {
-    LOG_ERROR << "ProcessPacket read public header failed";
-    return;
-  }
-
-  // check sum
-  auto expected_checksum = static_cast<uint32_t>(
-      ::adler32(1, reinterpret_cast<const Bytef*>(packet.data() + 4),
-                static_cast<uInt>(packet.length() - 4)));
-  if (public_header.checksum != expected_checksum) {
-    LOG_ERROR << "received incorrect packet checksum: "
-              << public_header.checksum << ", expected: " << expected_checksum;
+  KCPReceivedPacket::ErrorCode result = packet.ReadPublicHeader(&public_header);
+  if (result != KCPReceivedPacket::SUCCESS) {
+    LOG_ERROR << "read public header from received packet failed with error: "
+              << result
+              << ", detail: " << KCPReceivedPacket::ErrorCodeToString(result);
     return;
   }
 
@@ -544,26 +548,26 @@ void KCPClient::ProcessPacket(KCPReceivedPacket& packet) {
 }
 
 void KCPClient::SendDataToWire(
-    const void* data, size_t len,
+    const KCPPendingSendPacket& packet,
     const muduo::net::InetAddress& address) /* const */ {
   UNUSED(address);
   if (!socket_->IsValidSocket()) {
     return;
   }
 
-  if (len > kMaxPacketSize) {
-    LOG_ERROR << "SendDataToWire with invalid data length: " << len;
+  if (packet.length() > kMaxPacketSize) {
+    LOG_ERROR << "SendDataToWire with invalid data length: " << packet.length();
     return;
   }
 
-  int rc = socket_->Write(data, len);
+  int rc = socket_->Write(packet.data(), packet.length());
   if (rc < 0) {
     int last_error = -rc;
     if (IS_EAGAIN(last_error)) {
       // cache data
       // channel_->enableWriting();
     } else {
-      LOG_ERROR << "SendDataToWire error: " << last_error
+      LOG_ERROR << "Write error: " << last_error
                 << ", detail: " << muduo::strerror_tl(last_error);
     }
   }

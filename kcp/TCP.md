@@ -172,7 +172,7 @@ TCP的拥塞控制主要用于控制数据进入网络的速率，避免网络�
 <td colspan="4" align="center">版本号</td>
 <td colspan="4" align="center">首部长度</td>
 <td colspan="6" align="center">区分服务码点</td>
-<td colspan="2" align="center"><a href="https://tools.ietf.org/html/rfc3168">ECN</a></td>
+<td colspan="2" align="center"><a href="https://tools.ietf.org/html/rfc3168#section-5">ECN</a></td>
 <td colspan="16" align="center">IP包整体长度</td>
 </tr>
 
@@ -235,8 +235,8 @@ TCP连接断开时需要的四次挥手，相比连接建立时多出来的一�
 ##### 4）TCP Flags
 一些老的 TCP 实现中只能理解其中的后 6 位 flags，前三个主要和拥塞控制有关。
 
-* [NS](https://tools.ietf.org/html/rfc3540#page-2)，随机和（Nonce Sum），这是一个实验性的 flag，主要目的是给 TCP 通信中的发送端（往往是服务端）一种机制来检查接收端的一些异常行为（恶意的（如接收端 TCP 进行[乐观 ACK 攻击](http://www.kb.cert.org/vuls/id/102014)或故意移除 ECE 标志）或非恶意的（如通信链路中的 NAT 设备，Router，Firewall 等可能由于不支持等原因将 ECE 标志清除）），异常的接收端可能会占用更多的带宽，破坏掉网络通信中带宽占用的公平性，提高自身的优先级。发送端会通过设置 IP 首部中的 ECN 字段随机一种 ECT 码点（codepoint，即 10-ECT(0) 和 01-ECT(1)），在没有被 CE 码点覆盖的情况下，接收端通过不断的累加 ECN 中对应 1 比特的数值从而计算出随机和（Nonce Sum），然后在 ACK 中将其填充至 TCP 首部中的 NS 字段传输到发送端，发送端会进行 NS 数值的校验。如果路由器设置 CE 码点，那么会覆盖掉 ECT 中的原始数值，这样接收端只能在一定的概率下（50%）计算出正确的 NS 数值，如果接收端正常处理了 CE，并设置 ECE 通知发送端，那么发送端在设置 CWR 时会暂停本次 NS 校验。当 ECE 正常响应之后，发送端会在后续的新的数据包中重新与接收端同步 NS 数值的计算，并进行后续的 NS 校验。如果，接收端出现异常（如前所述）清除掉中间路由器的 CE 通知（拥塞通告），那么发送端通过持续的 NS 校验便可以检测出接收端的异常行为（当拥塞频繁发生时，会越容易检测出接收端的异常行为，因为接收端对于 NS 数值计算正确的累计概率会一直下降）。
-* [CWR](https://tools.ietf.org/html/rfc3540)，发送端拥塞窗口减小（Congestion window reduced），一般是当发送端收到接收端含有 [ECE](https://tools.ietf.org/html/rfc3540) 标志的 ACK 之后，会进行 CWND 的收敛（因为当接收端收到 CE 码点之后，会给后续的每个 ACK 都设置 ECE 标志，直到收到发送端的 CWR 通知，这里 CWND 的收敛不能收敛过渡，比如可以在每个 RTT 内收到的含有 ECE 的 ACK 中累计只收敛一次，这一点类似于处于“拥塞规避”机制（congestion avoidance）中的 CWND 增长时变化的特点），而且会在下一个发往接收端的最新的数据包中设置该选项（[When the TCP data sender is ready to set the CWR bit after reducing the congestion window, it SHOULD set the CWR bit only on the first new data packet that it transmits](https://tools.ietf.org/html/rfc3168#page-19)），以此来响应接收端的 ECE（如果含有 CWR 的响应包丢失了，发送端可能会再次收敛 CWND（比如检测到超时丢包），CWR 会在下一个新的数据包中设置，而重传的包中并不会设置 CWR）。该选项需配合 ECE 标志以及 IP 首部中的 ECN 字段协调使用，同时也需要通信两端以及通信链路中的设备支持才能起到特定的作用。另外，关于拥塞窗口的减小，典型有三种原因：
+* [NS](https://tools.ietf.org/html/rfc3540#page-2)，随机和（Nonce Sum），这是一个实验性的 flag，主要目的是给 TCP 通信中的发送端（往往是服务端）一种机制来检查接收端的一些异常行为（恶意的（如接收端 TCP 进行[乐观 ACK 攻击](http://www.kb.cert.org/vuls/id/102014)或故意移除 ECE 标志）或非恶意的（如通信链路中的 NAT 设备，Router，Firewall 等可能由于不支持等原因将 ECE 标志清除）），异常的接收端可能会占用更多的带宽，破坏掉网络通信中带宽占用的公平性，提高自身的优先级。发送端会通过设置 IP 首部中的 ECN 字段随机一种 ECT 码点（codepoint，即 10-ECT(0) 和 01-ECT(1)），在没有被 CE（Congestion Experienced） 码点覆盖的情况下，接收端通过不断的累加 ECN 中对应 1 比特的数值从而计算出随机和（Nonce Sum），然后在 ACK 中将其填充至 TCP 首部中的 NS 字段传输到发送端，发送端会进行 NS 数值的校验。如果路由器设置 CE 码点，那么会覆盖掉 ECT 中的原始数值，这样接收端只能在一定的概率下（50%）计算出正确的 NS 数值，如果接收端正常处理了 CE，并设置 ECE 通知发送端，那么发送端在设置 CWR 时会暂停本次 NS 校验。当 ECE 正常响应之后，发送端会在后续的新的数据包中重新与接收端同步 NS 数值的计算，并进行后续的 NS 校验。如果，接收端出现异常（如前所述）清除掉中间路由器的 CE 通知（拥塞通告），那么发送端通过持续的 NS 校验便可以检测出接收端的异常行为（当拥塞频繁发生时，会越容易检测出接收端的异常行为，因为接收端对于 NS 数值计算正确的累计概率会一直下降）。
+* [CWR](https://tools.ietf.org/html/rfc3540)，发送端拥塞窗口减小（Congestion Window Reduced），一般是当发送端收到接收端含有 [ECE](https://tools.ietf.org/html/rfc3540) 标志的 ACK 之后，会进行 CWND 的收敛（因为当接收端收到 CE 码点之后，会给后续的每个 ACK 都设置 ECE 标志，直到收到发送端的 CWR 通知，这里 CWND 的收敛不能收敛过渡，比如可以在每个 RTT 内收到的含有 ECE 的 ACK 中累计只收敛一次，这一点类似于处于“拥塞规避”机制（congestion avoidance）中的 CWND 增长时变化的特点），而且会在下一个发往接收端的最新的数据包中设置该选项（[When the TCP data sender is ready to set the CWR bit after reducing the congestion window, it SHOULD set the CWR bit only on the first new data packet that it transmits](https://tools.ietf.org/html/rfc3168#page-19)），以此来响应接收端的 ECE（如果含有 CWR 的响应包丢失了，发送端可能会再次收敛 CWND（比如检测到超时丢包），CWR 会在下一个新的数据包中设置，而重传的包中并不会设置 CWR）。该选项需配合 ECE 标志以及 IP 首部中的 ECN 字段协调使用，同时也需要通信两端以及通信链路中的设备支持才能起到特定的作用。另外，关于拥塞窗口的减小，典型有三种原因：
     * 1）超时重传（触发慢启动）。
     * 2）快速重传（触发快速恢复）。
     * 3）响应 ECE 并设置 CWR 。

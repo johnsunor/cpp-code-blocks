@@ -1,11 +1,18 @@
 
 #include "kcp_packets.h"
 
+#include <zconf.h>
+#include <zlib.h>
+
 #include <memory>
+
+#include <muduo/base/LogStream.h>
 
 const size_t KCPPublicHeader::kPublicHeaderLength;
 
 bool KCPPublicHeader::ReadFrom(const char* buf, size_t length) {
+  assert(buf != nullptr);
+
   if (length < kPublicHeaderLength) {
     return false;
   }
@@ -29,6 +36,8 @@ bool KCPPublicHeader::ReadFrom(const char* buf, size_t length) {
 }
 
 bool KCPPublicHeader::WriteTo(char* buf, size_t length) const {
+  assert(buf != nullptr);
+
   if (length < kPublicHeaderLength) {
     return false;
   }
@@ -51,6 +60,8 @@ bool KCPPublicHeader::WriteTo(char* buf, size_t length) const {
 }
 
 bool KCPPublicHeader::WriteChecksum(char* buf, size_t length) const {
+  assert(buf != nullptr);
+
   if (length < sizeof(checksum)) {
     return false;
   }
@@ -119,25 +130,34 @@ bool KCPReceivedPacket::ReadUInt8(uint8_t* result) {
 }
 
 bool KCPReceivedPacket::ReadUInt16(uint16_t* result) {
+  assert(result != nullptr);
+
   if (!ReadBytes(result, sizeof(*result))) {
     return false;
   }
+
   *result = le16toh(*result);
   return true;
 }
 
 bool KCPReceivedPacket::ReadUInt32(uint32_t* result) {
+  assert(result != nullptr);
+
   if (!ReadBytes(result, sizeof(*result))) {
     return false;
   }
+
   *result = le32toh(*result);
   return true;
 }
 
 bool KCPReceivedPacket::ReadUInt64(uint64_t* result) {
+  assert(result != nullptr);
+
   if (!ReadBytes(result, sizeof(*result))) {
     return false;
   }
+
   *result = le64toh(*result);
   return true;
 }
@@ -147,6 +167,8 @@ bool KCPReceivedPacket::CanRead(size_t bytes) const {
 }
 
 bool KCPReceivedPacket::ReadBytes(void* result, size_t size) {
+  assert(result != nullptr);
+
   if (!CanRead(size)) {
     return false;
   }
@@ -165,25 +187,34 @@ bool KCPReceivedPacket::PeekUInt8(uint8_t* result) const {
 }
 
 bool KCPReceivedPacket::PeekUInt16(uint16_t* result) const {
+  assert(result != nullptr);
+
   if (!PeekBytes(result, sizeof(*result))) {
     return false;
   }
+
   *result = le16toh(*result);
   return true;
 }
 
 bool KCPReceivedPacket::PeekUInt32(uint32_t* result) const {
+  assert(result != nullptr);
+
   if (!PeekBytes(result, sizeof(*result))) {
     return false;
   }
+
   *result = le32toh(*result);
   return true;
 }
 
 bool KCPReceivedPacket::PeekUInt64(uint64_t* result) const {
+  assert(result != nullptr);
+
   if (!PeekBytes(result, sizeof(*result))) {
     return false;
   }
+
   *result = le64toh(*result);
   return true;
 }
@@ -193,6 +224,8 @@ bool KCPReceivedPacket::CanPeek(size_t bytes) const {
 }
 
 bool KCPReceivedPacket::PeekBytes(void* result, size_t size) const {
+  assert(result != nullptr);
+
   if (!CanPeek(size)) {
     return false;
   }
@@ -202,33 +235,62 @@ bool KCPReceivedPacket::PeekBytes(void* result, size_t size) const {
   return true;
 }
 
-bool KCPReceivedPacket::ReadPublicHeader(KCPPublicHeader* public_header) {
+KCPReceivedPacket::ErrorCode KCPReceivedPacket::ReadPublicHeader(
+    KCPPublicHeader* public_header) {
+  assert(public_header != nullptr);
+
   if (!CanRead(KCPPublicHeader::kPublicHeaderLength)) {
-    return false;
+    return INVALID_LENGTH;
   }
 
   uint32_t checksum;
   if (!ReadUInt32(&checksum)) {
-    return false;
+    return UNABLE_READ_CHECKSUM;
   }
 
   uint8_t packet_type;
   if (!ReadUInt8(&packet_type)) {
-    return false;
+    return UNABLE_READ_PACKET_TYPE;
   }
 
   uint32_t session_id;
   if (!ReadUInt32(&session_id)) {
-    return false;
+    return UNABLE_READ_SESSION_ID;
+  }
+
+  // crc32/adler32
+  auto expected_checksum = static_cast<uint32_t>(
+      ::adler32(1, reinterpret_cast<const Bytef*>(data() + 4),
+                static_cast<uInt>(length() - 4)));
+  if (checksum != expected_checksum) {
+    return INVALID_CHECKSUM;
   }
 
   public_header->checksum = checksum;
   public_header->packet_type = packet_type;
   public_header->session_id = session_id;
-  // crc32/adler32
 
-  return true;
+  return SUCCESS;
 }
+
+#define ERROR_CODE_CASE(code) \
+  case code:                  \
+    return #code
+
+std::string KCPReceivedPacket::ErrorCodeToString(uint8_t code) {
+  switch (code) {
+    ERROR_CODE_CASE(SUCCESS);
+    ERROR_CODE_CASE(INVALID_LENGTH);
+    ERROR_CODE_CASE(UNABLE_READ_CHECKSUM);
+    ERROR_CODE_CASE(UNABLE_READ_PACKET_TYPE);
+    ERROR_CODE_CASE(UNABLE_READ_SESSION_ID);
+    ERROR_CODE_CASE(INVALID_CHECKSUM);
+    default:
+      return "UNKNOW";
+  }
+}
+
+#undef ERROR_CODE_CASE
 
 muduo::LogStream& operator<<(muduo::LogStream& s,
                              const KCPReceivedPacket& packet) {
@@ -242,3 +304,53 @@ KCPClonedPacket::KCPClonedPacket(const void* data, size_t length)
 }
 
 KCPClonedPacket::~KCPClonedPacket() { delete[] data_; }
+
+KCPPendingSendPacket::KCPPendingSendPacket(char* data, size_t length)
+    : KCPPendingSendPacket(data, length, false) {}
+
+KCPPendingSendPacket::KCPPendingSendPacket(char* data, size_t length,
+                                           bool owns_data)
+    : data_(data), length_(length), owns_data_(owns_data) {}
+
+KCPPendingSendPacket::~KCPPendingSendPacket() {
+  if (owns_data_) {
+    delete[] data_;
+  }
+}
+
+KCPPendingSendPacket::ErrorCode KCPPendingSendPacket::WritePublicHeader(
+    uint8_t packet_type, uint32_t session_id) {
+  KCPPublicHeader public_header;
+
+  public_header.packet_type = packet_type;
+  public_header.session_id = session_id;
+  if (!public_header.WriteTo(data(), length())) {
+    return UNABLE_WRITE_PUBLIC_HEADER;
+  }
+
+  public_header.checksum = static_cast<uint32_t>(
+      ::adler32(1, reinterpret_cast<const Bytef*>(data() + 4),
+                static_cast<uInt>(length() - 4)));
+  if (!public_header.WriteChecksum(data(), length())) {
+    return UNABLE_WRITE_CHECKSUM;
+  }
+
+  return SUCCESS;
+}
+
+#define ERROR_CODE_CASE(code) \
+  case code:                  \
+    return #code
+
+std::string KCPPendingSendPacket::ErrorCodeToString(uint8_t code) {
+  switch (code) {
+    ERROR_CODE_CASE(SUCCESS);
+    ERROR_CODE_CASE(INVALID_LENGTH);
+    ERROR_CODE_CASE(UNABLE_WRITE_PUBLIC_HEADER);
+    ERROR_CODE_CASE(UNABLE_WRITE_CHECKSUM);
+    default:
+      return "UNKNOW";
+  }
+}
+
+#undef ERROR_CODE_CASE

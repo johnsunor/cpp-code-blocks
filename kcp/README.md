@@ -13,6 +13,8 @@
 当前的封装基于 [muduo](https://github.com/chenshuo/muduo) ，通过 muduo 的 EventLoop 来进行事件的监听及分发，底层借助 [UDP](https://man7.org/linux/man-pages/man7/udp.7.html) 来进行通讯。封装之后我在公网上的两台服务器之间做了初步的测试，主要是可靠性测试和弱网络条件下的传输效率测试。测试环境为公网中两台主机，客户端主机 A 出口带宽为 1mbit，入口带宽 10mbit，服务端主机 B 出口带宽 5mbit，入口带宽为 10mbit，两主机间正常 RTT 为 30ms，根据需求可在主机 A 中通过 tc qdisc 添加信道噪音（延迟，重排序，重复，损坏，丢包等）模拟一条弱网络。测试部分代码位于 examples 目录下，弱网络模拟脚本位于 scripts 目录下。
 1. `examples/diff` 功能性测试，即通过搭配 kcp 和 udp 测试两台主机是否可以在弱网络条件下实现消息的可靠传递。测试过程由主机 A 中的客户端随机生成长度范围在 [10, 14000] 内的 ASCII 字符串，然后再随机拆分为 10 部分，各部分按相对顺序将数据以间隔 10ms 的时间差分开发送到主机 B，主机 B 收到后将数据原样发送回来，主机 A 收到后汇总为一条消息，再和原始消息进行比对。经过多轮测试数据模拟，当前程序可以通过比对测试。
 2. `examples/pingpong` 弱网络性能测试，在弱网络下通过和 muduo 自带的 [pingpong](https://github.com/chenshuo/muduo/tree/master/examples/pingpong) 吞吐量测试程序进行比较，通过发送相同大小的数据包进行传输效率的测试。测试中主要使用 4KB （对主机 A 中的客户端来说 BDP 大概为 4KB（1mbit / 8 * 30 / 1000) ）大小的数据块进行测试。信道中在没有添加噪音之前，进行测试发现程序中通过 KCP 的传输的效率大概为 TCP 传输效率的 94%，而添加噪音信号（丢包率在 5% ~ 10%）之后，通过多轮测试后发现通过 TCP （拥塞控制算法为 cubic）的传输效率要比 KCP 下降的多很多，KCP 的传输效率要比实验环境下的 TCP 要高 30% ~ 50%。通过对测试代码中应用层收到的数据量（约等于应用层发送的数据量）Bytes 和 tc qdisc 统计到的发送的总数据量 Bytes 进行比对，KCP 大概是 88%，TCP 大概是 90%。对于实验中模拟的条件来说，在应用层面相同的时间内基于 KCP 的传输确实可以起到更高的传输效率。有兴趣的读者可以尝试调整不同的 KCP 参数，模拟不同的网络环境，通过不同大小的数据包，以及打开/关闭网卡 TSO 等不同的环境下来观察一下 TCP 和 KCP 的表现。
+3. `examples/udp` 关于 `class UDPSocket` 中封装的部分 UDP 接口的测试。
+4. `examples/benchmark` 部分性能测试程序。
 
 ### 实现
 1）. 代码中主要包含 4 个核心的类，`class UDPSocket`，`class KCPSession`，`class KCPServer`，`class KCPClient`，基本描述如下：
@@ -58,7 +60,7 @@ auto on_connection =
 
 // 用户层消息到达 callback
 auto on_message =
-  [](const KCPSessionPtr& session, Buffer* buf) {
+  [](const KCPSessionPtr& session, muduo::net::Buffer* buf) {
     LOG_INFO << "message from server: " << buf->retrieveAllAsString();
   };
 
@@ -81,7 +83,7 @@ auto on_connection =
               << (connected ? " up" : " down");
   };
 auto on_message =
-  [](const KCPSessionPtr& session, Buffer* buf) {
+  [](const KCPSessionPtr& session, muduo::net::Buffer* buf) {
     LOG_INFO << "message from client: " << buf->as_string();
     session->Write(buf);
   };

@@ -19,8 +19,7 @@ function main() {
   const port = getInt(process.argv[3], 1024, 65535);
 
   const server = dgram.createSocket({
-    type: 'udp4',
-    reuseAddr: true,
+    type: 'udp4'
   });
 
   server.on('error', (error) => {

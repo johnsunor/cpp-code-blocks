@@ -7,6 +7,7 @@
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/InetAddress.h>
 
+#include "log_util.h"
 #include "udp_socket.h"
 
 int main(int argc, char* argv[]) {
@@ -24,8 +25,8 @@ int main(int argc, char* argv[]) {
     uint32_t block_size = static_cast<uint32_t>(atoi(argv[3]));
     uint32_t timeout = static_cast<uint32_t>(atoi(argv[4]));
 
-    assert(block_size > 0);
-    assert(timeout > 0);
+    ASSERT_EXIT(block_size > 0);
+    ASSERT_EXIT(timeout > 0);
 
     string message;
     for (uint32_t i = 0; i < block_size; ++i) {
@@ -36,8 +37,7 @@ int main(int argc, char* argv[]) {
     UDPSocket socket;
     InetAddress address(ip, port);
 
-    socket.AllowReceiveError();
-    assert(socket.Connect(address) == 0);
+    ERROR_EXIT(socket.Connect(address));
 
     uint64_t total_bytes_read = 0;
     uint64_t total_bytes_write = 0;
@@ -45,22 +45,20 @@ int main(int argc, char* argv[]) {
     Channel channel(&loop, socket.sockfd());
     channel.setReadCallback([&](Timestamp) {
       char buf[64 * 1024];
-      int result = socket.Read(buf, sizeof(buf));
-      assert(result > 0);
+      int result = ERROR_EXIT(socket.Read(buf, sizeof(buf)));
 
       ++total_messages_read;
       total_bytes_read += result;
 
-      result = socket.Write(buf, result);
-      assert(result > 0);
+      result = ERROR_EXIT(socket.Write(buf, result));
 
       total_bytes_write += result;
     });
 
-    channel.setErrorCallback([] { assert(false); });
     channel.enableReading();
 
-    socket.Write(message.data(), message.size());
+    ERROR_EXIT(socket.Write(message.data(), message.size()));
+
     loop.runAfter(timeout, [&] {
       LOG_WARN << total_bytes_read << " total bytes read";
       LOG_WARN << total_messages_read << " total messages read";
@@ -77,7 +75,7 @@ int main(int argc, char* argv[]) {
                  << " MiB/s throughput";
       }
 
-      exit(0);
+      loop.quit();
     });
 
     loop.loop();

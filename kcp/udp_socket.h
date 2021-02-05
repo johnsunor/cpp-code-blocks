@@ -48,6 +48,36 @@ class UDPSocket final {
   int Bind(const muduo::net::InetAddress& address);
   void Close();
 
+  void AllowReuseAddress();
+  void AllowReusePort();
+  void AllowBroadcast();
+  void AllowReceiveError();
+  void AllowReceiveDSCPAndECN();
+
+  int SetReceiveBufferSize(int size);
+  int SetSendBufferSize(int size);
+
+  // for sending mcast datagram
+  int SetMulticastIF(unsigned int ifindex);
+  int SetMulticastIF(const char* ifname);
+  int SetMulticastTTL(int ttl);
+  int SetMulticastLoop(bool loop);
+
+  int SetDSCPAndECN(uint8_t dscp_and_ecn);
+
+  // for receiving mcast datagram
+  int JoinMulticastGroup(const muduo::net::InetAddress& group_address,
+                         const char* ifname);
+  int JoinMulticastGroup(const muduo::net::InetAddress& group_address,
+                         unsigned int ifindex);
+  int LeaveMulticastGroup(const muduo::net::InetAddress& group_address,
+                          const char* ifname);
+  int LeaveMulticastGroup(const muduo::net::InetAddress& group_address,
+                          unsigned int ifindex);
+
+  int sockfd() const { return sockfd_; }
+  bool IsValidSocket() const { return sockfd_ != kInvalidSocket; }
+
   int GetPeerAddress(muduo::net::InetAddress* address);
   int GetLocalAddress(muduo::net::InetAddress* address);
 
@@ -65,30 +95,18 @@ class UDPSocket final {
   int RecvMmsg(struct mmsghdr* msgvec, unsigned int vlen, int flags = 0);
   int SendMmsg(struct mmsghdr* msgvec, unsigned int vlen, int flags = 0);
 
-  void AllowReuseAddress();
-  void AllowReusePort();
-  void AllowBroadcast();
-  void AllowReceiveError();
-
-  int SetReceiveBufferSize(int32_t size);
-
-  int SetSendBufferSize(int32_t size);
-
-  int SetMulticastInterface(uint32_t interface_index);
-
-  int SetMulticastTimeToLive(int time_to_live);
-
-  int sockfd() const { return sockfd_; }
-
-  bool IsValidSocket() const { return sockfd_ != kInvalidSocket; }
+  static bool IsAddressMulticast(const muduo::net::InetAddress& address);
 
  private:
   enum SocketOptions : uint8_t {
+    // SOL_SOCKET
     SOCKET_OPTION_REUSE_ADDRESS = 1 << 0,
     SOCKET_OPTION_REUSE_PORT = 1 << 1,
     SOCKET_OPTION_BROADCAST = 1 << 2,
+
+    // IPPROTO_IP/IPV6
     SOCKET_OPTION_RECEIVE_ERROR = 1 << 3,
-    SOCKET_OPTION_MULTICAST_LOOP = 1 << 4
+    SOCKET_OPTION_RECEIVE_DSCP_AND_ECN = 1 << 4,
   };
 
   int CreateSocket(int addr_family);
@@ -99,12 +117,12 @@ class UDPSocket final {
   int SendToImpl(const void* buf, size_t len,
                  const muduo::net::InetAddress* address, int flags);
 
+  int JoinOrLeaveMulticastGroup(const muduo::net::InetAddress& group_address,
+                                unsigned int ifindex, bool op_join);
+
   int sockfd_{kInvalidSocket};
   int addr_family_{AF_UNSPEC};
-  int socket_options_{SOCKET_OPTION_MULTICAST_LOOP};
-
-  uint32_t multicast_interface_{0};
-  int multicast_time_to_live_{IP_DEFAULT_MULTICAST_TTL};
+  int socket_options_{0};
 
   std::unique_ptr<muduo::net::InetAddress> local_address_;
   std::unique_ptr<muduo::net::InetAddress> peer_address_;

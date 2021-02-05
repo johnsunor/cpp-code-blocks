@@ -8,19 +8,22 @@
 #include "kcp_callbacks.h"
 #include "kcp_server.h"
 #include "kcp_session.h"
+#include "log_util.h"
 
 int main(int argc, char* argv[]) {
   using namespace muduo;
   using namespace muduo::net;
 
   if (argc != 3) {
-    fprintf(stderr, "Usage: server <address> <port>\n");
+    fprintf(stderr, "Usage: %s <address> <port>\n", argv[0]);
   } else {
     LOG_INFO << "pid = " << getpid() << ", tid = " << CurrentThread::tid();
     Logger::setLogLevel(Logger::WARN);
 
     const char* ip = argv[1];
     uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
+    ASSERT_EXIT(port > 1023);
+
     InetAddress address(ip, port);
 
     EventLoop loop;

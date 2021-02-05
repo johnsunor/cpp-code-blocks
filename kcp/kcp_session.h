@@ -1,14 +1,11 @@
 #ifndef KCP_SESSION_H
 #define KCP_SESSION_H
 
-#include <sys/socket.h>
+#include <stdint.h>
 
-#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <memory>
-#include <queue>
-#include <utility>
 
 #include <muduo/base/Timestamp.h>
 #include <muduo/net/Buffer.h>
@@ -43,6 +40,32 @@ struct PendingError {
   uint8_t type{0};
   uint8_t code{0};
 };
+
+// diagram
+//
+// |<--------snd_que------->|<-snd_buf->|                  |<-rcv_buf->|<-----rcv_que------>|
+// +------------------------+-----------+--------+     +---+--------------------------------+
+// |n|n-1|...|16|15|14|13|12|11|10|09|08|........| ==> |...|xx|xx|xx|xx|07|06|05|04|03|02|01|
+// +------------------------+-----------+--------+     +---+--------------------------------+
+//            ^           ^            ^         ^     ^              ^       nrcv_que      ^
+//            |           |            |         |     |              |<--------acked------>|
+//            |           |        [snd_una]     |     |              |                     |
+//            |           |            |         |     |          [rcv_nxt]                 |
+//            |       [snd_nxt]        |         |     |              |                     |
+//            |           |            |         |     |<----rwnd---->|                     |
+//            |<--dsnd--->|<-inflight->|         |     |                                    |
+//            |                        |         |     |                                    |
+//            |<---------wnd---------->|<-acked->|     |<---------------rcv_wnd-------------|
+//
+// sender:
+// inflight = snd_una - snd_nxt => [08, 12)
+// wnd = min(cwnd, min(swnd, rwnd)) => [08, 16)
+// dsnd = snd_una + wnd - snd_nxt => [12, 16)
+//
+// recever:
+// rwnd = rcv_wnd - nrcv_que => [08, 08 + rwnd)
+// acked(nrcv_que) => be consumed by ikcp_recv
+// rcv_nxt => ikcp_flush una => update sender's snd_una
 
 // connected -> closed
 class KCPSession final : public std::enable_shared_from_this<KCPSession> {

@@ -5,9 +5,12 @@
 #include <memory>
 #include <string>
 
-#include <muduo/base/LogStream.h>
-
 #include "common/macros.h"
+
+namespace muduo {
+
+class LogStream;
+}  // namespace muduo
 
 enum KCPReceivedPacketType : uint8_t {
   SYN_PACKET,
@@ -44,6 +47,15 @@ muduo::LogStream& operator<<(muduo::LogStream& s,
 
 class KCPReceivedPacket final {
  public:
+  enum ErrorCode : uint8_t {
+    SUCCESS,
+    INVALID_LENGTH,
+    UNABLE_READ_CHECKSUM,
+    UNABLE_READ_PACKET_TYPE,
+    UNABLE_READ_SESSION_ID,
+    INVALID_CHECKSUM,
+  };
+
   KCPReceivedPacket(const char* data, size_t length);
   KCPReceivedPacket(const char* data, size_t length, bool owns_data);
 
@@ -72,7 +84,9 @@ class KCPReceivedPacket final {
   const char* data() const { return data_; }
   size_t length() const { return length_; }
 
-  bool ReadPublicHeader(KCPPublicHeader* public_header);
+  ErrorCode ReadPublicHeader(KCPPublicHeader* public_header);
+
+  static std::string ErrorCodeToString(uint8_t code);
 
  private:
   const char* data_{nullptr};
@@ -100,6 +114,36 @@ class KCPClonedPacket final {
   size_t length_{0};
 
   DISALLOW_COPY_AND_ASSIGN(KCPClonedPacket);
+};
+
+class KCPPendingSendPacket final {
+ public:
+  enum ErrorCode : uint8_t {
+    SUCCESS,
+    INVALID_LENGTH,
+    UNABLE_WRITE_PUBLIC_HEADER,
+    UNABLE_WRITE_CHECKSUM,
+  };
+
+  KCPPendingSendPacket(char* data, size_t length);
+  KCPPendingSendPacket(char* data, size_t length, bool owns_data);
+
+  ~KCPPendingSendPacket();
+
+  char* data() { return data_; }
+  const char* data() const { return data_; }
+  size_t length() const { return length_; }
+
+  ErrorCode WritePublicHeader(uint8_t packet_type, uint32_t session_id);
+
+  static std::string ErrorCodeToString(uint8_t code);
+
+ private:
+  char* data_{nullptr};
+  size_t length_{0};
+  bool owns_data_{false};
+
+  DISALLOW_COPY_AND_ASSIGN(KCPPendingSendPacket);
 };
 
 #endif

@@ -4,11 +4,9 @@
 #include <linux/errqueue.h>
 #include <sys/socket.h>
 
+#include <atomic>
 #include <functional>
 #include <memory>
-
-#include <zconf.h>
-#include <zlib.h>
 
 #include <muduo/base/Logging.h>
 #include <muduo/base/ThreadLocalSingleton.h>
@@ -74,8 +72,7 @@ int KCPServer::Listen(const muduo::net::InetAddress& address) {
 
   auto socket = std::make_unique<UDPSocket>();
 
-  socket->AllowReuseAddress();
-  socket->AllowReusePort();
+  // socket->AllowReusePort();
   socket->AllowReceiveError();
 
   int rc = socket->Bind(address);
@@ -410,29 +407,21 @@ bool KCPServer::GenerateSessionId(uint32_t* session_id) const {
 
 void KCPServer::SendPacket(uint8_t packet_type, uint32_t session_id,
                            const muduo::net::InetAddress& client_address) {
-  KCPPublicHeader public_header;
-  public_header.packet_type = packet_type;
-  public_header.session_id = session_id;
-
-  char buf[kMaxPacketSize];
-  if (!public_header.WriteTo(buf, sizeof(buf))) {
+  char buf[KCPPublicHeader::kPublicHeaderLength];
+  KCPPendingSendPacket packet(buf, sizeof(buf));
+  KCPPendingSendPacket::ErrorCode result =
+      packet.WritePublicHeader(packet_type, session_id);
+  if (result != KCPPendingSendPacket::SUCCESS) {
     LOG_ERROR << "WriteTo failed, session_id: " << session_id
               << ", client_address: " << client_address.toIpPort();
     return;
   }
 
-  size_t packet_length = KCPPublicHeader::kPublicHeaderLength;
-  public_header.checksum = static_cast<uint32_t>(
-      ::adler32(1, reinterpret_cast<const Bytef*>(buf + 4),
-                static_cast<uInt>(packet_length - 4)));
-  if (!public_header.WriteChecksum(buf, sizeof(buf))) {
-    return;
-  }
-
-  int rc = socket_->SendTo(buf, packet_length, client_address);
+  int rc = socket_->SendTo(buf, sizeof(buf), client_address);
   if (rc < 0) {
     int saved_errno = -rc;
-    LOG_ERROR << "SendTo failed, public header: " << public_header
+    LOG_ERROR << "SendTo failed, packet_type: " << packet_type
+              << ", session_id: " << session_id
               << ", client_address: " << client_address.toIpPort()
               << ", error: " << saved_errno
               << ", detail: " << muduo::strerror_tl(saved_errno);
@@ -623,9 +612,21 @@ bool KCPServer::InitializeSession(
   session->set_message_callback(message_callback_);
   session->set_write_complete_callback(write_complete_callback_);
   session->set_high_water_mark_callback(high_water_mark_callback_);
-  session->set_output_callback([this](const void* data, size_t len,
+  session->set_output_callback([this](void* data, size_t len,
+                                      uint32_t curr_session_id,
                                       const muduo::net::InetAddress& address) {
-    AppendPacket(data, len, address);
+    KCPPendingSendPacket pending_send_packet(static_cast<char*>(data), len);
+    KCPPendingSendPacket::ErrorCode result =
+        pending_send_packet.WritePublicHeader(DATA_PACKET, curr_session_id);
+    if (result != KCPPendingSendPacket::SUCCESS) {
+      LOG_ERROR << "WritePublicHeader failed, session_id: " << curr_session_id
+                << ", address: " << address.toIpPort();
+      return;
+    }
+
+    AppendPacket(pending_send_packet, address);
+    // socket_->SendTo(pending_send_packet.data(), pending_send_packet.length(),
+    //                address);
   });
   session->set_flush_tx_queue([this] { FlushTxQueue(); });
 
@@ -686,24 +687,12 @@ void KCPServer::ProcessPacket(KCPReceivedPacket& packet,
     return;
   }
 
-  // decrypt
-  // checksum
-  // fec
-
   KCPPublicHeader public_header;
-  if (!packet.ReadPublicHeader(&public_header)) {
-    LOG_ERROR << "received incorrect packet length: " << packet.length()
-              << ", can not read public header";
-    return;
-  }
-
-  // checksum
-  auto expected_checksum = static_cast<uint32_t>(
-      ::adler32(1, reinterpret_cast<const Bytef*>(packet.data() + 4),
-                static_cast<uInt>(packet.length() - 4)));
-  if (public_header.checksum != expected_checksum) {
-    LOG_ERROR << "received incorrect packet checksum: "
-              << public_header.checksum << ", expected: " << expected_checksum;
+  KCPReceivedPacket::ErrorCode result = packet.ReadPublicHeader(&public_header);
+  if (result != KCPReceivedPacket::SUCCESS) {
+    LOG_ERROR << "read public header from received packet failed with error: "
+              << result
+              << ", detail: " << KCPReceivedPacket::ErrorCodeToString(result);
     return;
   }
 
@@ -760,10 +749,10 @@ void KCPServer::InitializeThread(muduo::net::EventLoop*) const {
 }
 
 void KCPServer::AppendPacket(
-    const void* data, size_t len,
+    const KCPPendingSendPacket& packet,
     const muduo::net::InetAddress& address) /* const */ {
-  if (len > kMaxPacketSize) {
-    LOG_ERROR << "AppendPacket with invalid data length: " << len
+  if (packet.length() > kMaxPacketSize) {
+    LOG_ERROR << "AppendPacket with invalid data length: " << packet.length()
               << " address: " << address.toIpPort();
     return;
   }
@@ -784,8 +773,8 @@ void KCPServer::AppendPacket(
   memcpy(hdr->msg_name, storage.addr, storage.addr_len);
 
   RawPacket* pkt = &thread_data.raw_packets[index];
-  pkt->iov.iov_len = len;
-  memcpy(pkt->iov.iov_base, data, len);
+  pkt->iov.iov_len = packet.length();
+  memcpy(pkt->iov.iov_base, packet.data(), packet.length());
 
   ++thread_data.num_packets;
   if (thread_data.num_packets >= kNumPacketsPerSend) {

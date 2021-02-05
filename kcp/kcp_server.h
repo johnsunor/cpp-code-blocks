@@ -101,7 +101,7 @@ class KCPServer final {
   void SetWriteBlocked() { write_blocked_ = true; }
 
   void InitializeThread(muduo::net::EventLoop* loop) const;
-  void AppendPacket(const void* data, size_t len,
+  void AppendPacket(const KCPPendingSendPacket& packet,
                     const muduo::net::InetAddress& address);
   void FlushTxQueue();
 

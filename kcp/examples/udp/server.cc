@@ -7,6 +7,7 @@
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/InetAddress.h>
 
+#include "log_util.h"
 #include "udp_socket.h"
 
 int main(int argc, char* argv[]) {
@@ -21,27 +22,23 @@ int main(int argc, char* argv[]) {
 
     const char* ip = argv[1];
     uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
+    ASSERT_EXIT(port > 1023);
 
     EventLoop loop;
     UDPSocket socket;
     InetAddress address(ip, port);
 
-    socket.AllowReuseAddress();
-    socket.AllowReceiveError();
-    assert(socket.Bind(address) == 0);
+    ERROR_EXIT(socket.Bind(address));
 
     Channel channel(&loop, socket.sockfd());
     channel.setReadCallback([&](Timestamp) {
       char buf[64 * 1024];
       InetAddress peer_address;
-      int result = socket.RecvFrom(buf, sizeof(buf), &peer_address);
-      assert(result > 0);
+      int result = ERROR_EXIT(socket.RecvFrom(buf, sizeof(buf), &peer_address));
 
-      result = socket.SendTo(buf, result, peer_address);
-      assert(result > 0);
+      ERROR_EXIT(socket.SendTo(buf, result, peer_address));
     });
 
-    channel.setErrorCallback([] { assert(false); });
     channel.enableReading();
 
     loop.loop();

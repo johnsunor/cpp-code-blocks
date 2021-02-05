@@ -19,6 +19,7 @@ class URandom final {
   }
 
   bool RandBytes(void* buf, size_t bytes) {
+    assert(buf != nullptr);
     size_t total_read = 0;
     while (total_read < bytes) {
       void* addr = static_cast<char*>(buf) + total_read;
@@ -36,6 +37,7 @@ class URandom final {
 
   URandom() : fd_(HANDLE_EINTR(::open("/dev/urandom", O_RDONLY | O_CLOEXEC))) {
     if (fd_ < 0) {
+      // XXX: try eager initialize urandom
       LOG_SYSFATAL << "open /dev/urandom failed";
     }
   }

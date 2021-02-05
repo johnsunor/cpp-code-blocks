@@ -2,6 +2,8 @@
 #ifndef KCP_CLIENT_H_
 #define KCP_CLIENT_H_
 
+#include <stdint.h>
+
 #include <functional>
 #include <memory>
 #include <unordered_map>
@@ -82,7 +84,10 @@ class KCPClient final {
   void Reconnect();
   void RunPeriodicTask();
 
+  bool InitializeSession(KCPSessionPtr& session, uint32_t session_id);
+
   void ProcessPacket(KCPReceivedPacket& packet);
+
   void ProcessSynPacket(const KCPPublicHeader& public_header,
                         KCPReceivedPacket& packet);
   void ProcessRstPacket(const KCPPublicHeader& public_header,
@@ -93,7 +98,7 @@ class KCPClient final {
                          KCPReceivedPacket& packet);
 
   void SendPacket(uint8_t packet_type, uint32_t session_id);
-  void SendDataToWire(const void* data, size_t len,
+  void SendDataToWire(const KCPPendingSendPacket& packet,
                       const muduo::net::InetAddress& address);
 
   muduo::net::EventLoop* const loop_{nullptr};

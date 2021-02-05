@@ -8,22 +8,23 @@
 #include "kcp_callbacks.h"
 #include "kcp_server.h"
 #include "kcp_session.h"
+#include "log_util.h"
 
 int main(int argc, char* argv[]) {
-  using namespace muduo;
-  using namespace muduo::net;
-
   if (argc != 3) {
-    fprintf(stderr, "Usage: server <ip> <port>\n");
+    fprintf(stderr, "Usage: %s <ip> <port>\n", argv[0]);
   } else {
-    LOG_INFO << "pid = " << getpid() << ", tid = " << CurrentThread::tid();
-    Logger::setLogLevel(Logger::WARN);
+    LOG_INFO << "pid = " << getpid()
+             << ", tid = " << muduo::CurrentThread::tid();
+    muduo::Logger::setLogLevel(muduo::Logger::WARN);
 
     const char* ip = argv[1];
     uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
-    InetAddress address(ip, port);
+    ASSERT_EXIT(port > 1023);
 
-    EventLoop loop;
+    muduo::net::InetAddress address(ip, port);
+
+    muduo::net::EventLoop loop;
 
     KCPServer server(&loop);
 
@@ -33,7 +34,9 @@ int main(int argc, char* argv[]) {
                    << (connected ? " up" : " down");
         });
     server.set_message_callback(
-        [](const KCPSessionPtr& session, Buffer* buf) { session->Write(buf); });
+        [](const KCPSessionPtr& session, muduo::net::Buffer* buf) {
+          session->Write(buf);
+        });
 
     server.ListenOrDie(address);
 

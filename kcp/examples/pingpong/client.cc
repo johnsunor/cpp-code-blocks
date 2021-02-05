@@ -7,36 +7,39 @@
 #include "kcp_callbacks.h"
 #include "kcp_client.h"
 #include "kcp_session.h"
+#include "log_util.h"
 
 int main(int argc, char* argv[]) {
-  using namespace muduo;
-  using namespace muduo::net;
-
   if (argc != 5) {
-    fprintf(stderr, "Usage: client <ip> <port> <block_size> <timeout>\n");
+    fprintf(stderr, "Usage: %s <ip> <port> <block_size> <timeout_sec>\n",
+            argv[0]);
   } else {
-    LOG_INFO << "pid = " << getpid() << ", tid = " << CurrentThread::tid();
-    Logger::setLogLevel(Logger::WARN);
+    LOG_INFO << "pid = " << getpid()
+             << ", tid = " << muduo::CurrentThread::tid();
+    muduo::Logger::setLogLevel(muduo::Logger::WARN);
 
     const char* ip = argv[1];
-    uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
-    uint32_t block_size = static_cast<uint32_t>(atoi(argv[3]));
-    uint32_t timeout = static_cast<uint32_t>(atoi(argv[4]));
+    int port = atoi(argv[2]);
+    int block_size = atoi(argv[3]);
+    double timeout_sec = atof(argv[4]);
 
-    assert(block_size > 0);
-    assert(timeout > 0);
+    ASSERT_EXIT(ip != nullptr);
+    ASSERT_EXIT(port > 1023 && port < 65535);
+    ASSERT_EXIT(block_size > 0 && block_size < 1024 * 1024);
+    ASSERT_EXIT(timeout_sec > 0 && timeout_sec < 10 * 60);
 
     uint64_t total_bytes_read = 0;
     uint64_t total_bytes_write = 0;
     uint64_t total_messages_read = 0;
 
-    string message;
-    for (uint32_t i = 0; i < block_size; ++i) {
+    std::string message;
+    message.reserve(block_size);
+    for (int i = 0; i < block_size; ++i) {
       message.push_back(static_cast<char>(i % 128));
     }
 
-    EventLoop loop;
-    InetAddress server_address(ip, port);
+    muduo::net::EventLoop loop;
+    muduo::net::InetAddress address(ip, static_cast<uint16_t>(port));
 
     KCPClient client(&loop);
     client.set_connection_callback(
@@ -55,9 +58,9 @@ int main(int argc, char* argv[]) {
                        << " average message size";
             }
 
-            if (timeout > 0) {
+            if (timeout_sec > 0) {
               LOG_WARN << static_cast<double>(total_bytes_read) /
-                              (timeout * 1024 * 1024)
+                              (timeout_sec * 1024 * 1024)
                        << " MiB/s throughput";
             }
 
@@ -65,19 +68,20 @@ int main(int argc, char* argv[]) {
           }
         });
 
-    client.set_message_callback([&](const KCPSessionPtr& session, Buffer* buf) {
-      ++total_messages_read;
-      total_bytes_read += buf->readableBytes();
-      total_bytes_write += buf->readableBytes();
-      session->Write(buf);
-    });
-    client.ConnectOrDie(server_address);
+    client.set_message_callback(
+        [&](const KCPSessionPtr& session, muduo::net::Buffer* buf) {
+          ++total_messages_read;
+          total_bytes_read += buf->readableBytes();
+          total_bytes_write += buf->readableBytes();
+          session->Write(buf);
+        });
+    client.ConnectOrDie(address);
 
-    loop.runAfter(timeout, [&] {
+    loop.runAfter(timeout_sec, [&] {
       if (client.state() == KCPClient::CONNECTED) {
         client.Disconnect();
       } else {
-        LOG_WARN << "client build connection failed";
+        LOG_ERROR << "client build connection failed";
         loop.quit();
       }
     });

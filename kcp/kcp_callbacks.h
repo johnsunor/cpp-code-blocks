@@ -28,7 +28,7 @@ using WriteCompleteCallback = std::function<void(const KCPSessionPtr&)>;
 using HighWaterMarkCallback = std::function<void(const KCPSessionPtr&, size_t)>;
 
 using OutputCallback =
-    std::function<void(const void*, size_t, const muduo::net::InetAddress&)>;
+    std::function<void(void*, size_t, uint32_t, const muduo::net::InetAddress&)>;
 
 using FlushTxQueueCallback = std::function<void()>;
 

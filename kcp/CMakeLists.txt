@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8)
 
 project(kcp C CXX)
 
-if(NOT CMAKE_BUILD_TYPE)
+if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Debug")
 endif()
 
@@ -30,13 +30,14 @@ set(CXX_FLAGS
  -Wshadow
  -Wwrite-strings
  -march=native
+ # https://gcc.gnu.org/wiki/Visibility
  -fvisibility="hidden"
  -fwrapv # allow wrap around
  -fno-strict-aliasing
  # -MMD
  -std=c++14
  -rdynamic
- )
+)
 if(CMAKE_BUILD_BITS EQUAL 32)
   list(APPEND CXX_FLAGS "-m32")
 endif()
@@ -79,10 +80,11 @@ set(kcp_SRCS
   kcp_session.cc
   kcp_client.cc
   kcp_server.cc
-  )
+)
 
 add_library(kcp ${kcp_SRCS})
-target_link_libraries(kcp muduo_base muduo_net z pthread)
+# target_link_libraries(kcp muduo_net muduo_base z pthread tcmalloc)
+target_link_libraries(kcp muduo_net muduo_base z pthread)
 
 add_subdirectory(examples)
 

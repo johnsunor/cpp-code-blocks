@@ -2,12 +2,8 @@
 #include "kcp_session.h"
 
 #include <assert.h>
-#include <stdint.h>
 
 #include <memory>
-
-#include <zconf.h>
-#include <zlib.h>
 
 #include <muduo/base/Logging.h>
 #include <muduo/net/EventLoop.h>
@@ -21,23 +17,7 @@
 #include "kcp_packets.h"
 
 KCPSession::KCPSession(muduo::net::EventLoop* loop)
-    : loop_(CHECK_NOTNULL(loop)) {
-  set_connection_callback([](const KCPSessionPtr&, bool) {
-    LOG_DEBUG << "kcp session connection callback";
-  });
-  set_message_callback([](const KCPSessionPtr&, muduo::net::Buffer*) {
-    LOG_DEBUG << "kcp session message callback";
-  });
-  set_high_water_mark_callback([](const KCPSessionPtr&, size_t) {
-    LOG_DEBUG << "kcp session high water mark callback";
-  });
-  set_write_complete_callback([](const KCPSessionPtr&) {
-    LOG_DEBUG << "kcp session write complete callback";
-  });
-  set_output_callback([](const void*, size_t, const muduo::net::InetAddress&) {
-    LOG_DEBUG << "kcp session output callback";
-  });
-}
+    : loop_(CHECK_NOTNULL(loop)) {}
 
 KCPSession::~KCPSession() {
   assert(IsClosed());
@@ -155,10 +135,12 @@ void KCPSession::UpdateConnectionState() {
 }
 
 // wrap around
-// 0x7fffffff ms ~ 596 hours
+// https://tools.ietf.org/html/rfc1323#page-11
+// send/recv buffer window [x, x + 2^30)
+// timestamp window [x, x + 2^31)
 // inline bool TimeGreaterThan(uint32_t t1, uint32_t t2) {
-//   return ((t1 > t2) && (t1 - t2 < 0x7fffffff)) ||
-//          ((t1 < t2) && (t2 - t1 >= 0x7fffffff));
+//   return ((t1 > t2) && (t1 - t2 < 0x80000000)) ||
+//          ((t1 < t2) && (t2 - t1 > 0x80000000));
 // }
 uint32_t KCPSession::CurrentMs() const {
   muduo::Timestamp now = muduo::Timestamp::now();
@@ -171,7 +153,9 @@ uint32_t KCPSession::CurrentMs() const {
 void KCPSession::OnConnectionEvent(bool connected) {
   LOG_TRACE << "kcp session " << session_id_ << " connection "
             << (connected ? "up" : "down");
-  connection_callback_(shared_from_this(), connected);
+  if (connection_callback_) {
+    connection_callback_(shared_from_this(), connected);
+  }
 }
 
 void KCPSession::FlushTxQueue() {
@@ -185,7 +169,7 @@ void KCPSession::OnReadEvent(size_t bytes_can_read) {
   input_buffer_.ensureWritableBytes(bytes_can_read);
   int len = ikcp_recv(kcp_.get(), input_buffer_.beginWrite(),
                       static_cast<int>(bytes_can_read));
-  if (len > 0) {
+  if (len > 0 && message_callback_) {
     input_buffer_.hasWritten(len);
     message_callback_(shared_from_this(), &input_buffer_);
   }
@@ -243,18 +227,18 @@ void KCPSession::ProcessPacketInLoopThread(
     OnReadEvent(available_data_size);
   }
 
-  bool need_flush_tx_queue = false;
-  if (IsClosed() || ikcp_can_flush_after_input(kcp_.get()) > 0) {
-    ikcp_flush(kcp_.get(), CurrentMs());
-    need_flush_tx_queue = true;
-  } else if (ikcp_can_send_ack(kcp_.get()) > 0) {
-    ikcp_flush_ack(kcp_.get());
-    need_flush_tx_queue = true;
-  }
+  // bool need_flush_tx_queue = false;
+  // if (IsClosed() || ikcp_can_flush_after_input(kcp_.get()) > 0) {
+  //   ikcp_flush(kcp_.get(), CurrentMs());
+  //   need_flush_tx_queue = true;
+  // } else if (ikcp_can_send_ack(kcp_.get()) > 0) {
+  //   ikcp_flush_ack(kcp_.get());
+  //   need_flush_tx_queue = true;
+  // }
 
-  if (need_flush_tx_queue) {
-    FlushTxQueue();
-  }
+  // if (need_flush_tx_queue) {
+  //   FlushTxQueue();
+  // }
 
   if (!IsClosed()) {
     int need_drain_after_process = ikcp_need_drain(kcp_.get());
@@ -360,30 +344,10 @@ void KCPSession::WriteInLoopThread(const void* data, size_t len) {
 }
 
 int KCPSession::OnKCPOutput(char* buf, int len, IKCPCB* kcp, void* user) {
-  assert(static_cast<size_t>(len) > KCPPublicHeader::kPublicHeaderLength);
   UNUSED(kcp);
 
   KCPSession* session = static_cast<KCPSession*>(user);
-
-  KCPPublicHeader public_header;
-  public_header.packet_type = DATA_PACKET;
-  public_header.session_id = session->session_id();
-  if (!public_header.WriteTo(buf, len)) {
-    LOG_ERROR << "WriteTo failed, buf len: " << len
-              << ", session_id: " << session->session_id();
-    return -1;
-  }
-
-  public_header.checksum = static_cast<uint32_t>(::adler32(
-      1, reinterpret_cast<const Bytef*>(buf + 4), static_cast<uInt>(len - 4)));
-  if (!public_header.WriteChecksum(buf, len)) {
-    return -1;
-  }
-
-  // fec
-  // crc32
-  // encrypt
   session->output_callback_(buf, static_cast<size_t>(len),
-                            session->peer_address());
+                            session->session_id(), session->peer_address());
   return 0;
 }

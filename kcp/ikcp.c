@@ -1331,19 +1331,23 @@ IUINT32 ikcp_available_sndwnd_in_bytes(const ikcpcb *kcp) {
 }
 
 IUINT32 ikcp_can_send_ack(const ikcpcb *kcp) {
-  if (kcp->ackcount == 0) {
+  if (kcp->ackcount <= 0) {
     return 0;
   }
 
-  if (kcp->nodelay > 0) {
-    return 1;
+  if (kcp->nsnd_que > 0) {
+    return 0;
   }
 
-  if (ikcp_wnd_unused(kcp) > 0) {
-    return 1;
+  if (kcp->nsnd_buf > 0) {
+    return 0;
   }
 
-  return 0;
+  // if (ikcp_wnd_unused(kcp) > 0) {
+  //  return 1;
+  // }
+
+  return 1;
 }
 
 // flush pending ack
