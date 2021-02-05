@@ -1,0 +1,5 @@
+add_executable(session_benchmark session_benchmark.cc)
+target_link_libraries(session_benchmark kcp)
+
+add_executable(uds_benchmark uds_benchmark.cc)
+target_link_libraries(uds_benchmark muduo_base pthread)

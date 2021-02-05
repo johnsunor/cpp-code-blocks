@@ -1,0 +1,2948 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="758" onload="init(evt)" viewBox="0 0 1200 758" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+	}
+
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom();
+			zoom(target);
+		}
+		else if (e.target.id == "unzoom") unzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+	}, false)
+
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+		return;
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+
+		for (var x = txt.length - 2; x > 0; x--) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom() {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+		search();
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) {
+				currentSearchTerm = term;
+				search();
+			}
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (currentSearchTerm === null) return;
+		var term = currentSearchTerm;
+
+		var re = new RegExp(term, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="758.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="741" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="741" > </text>
+<g id="frames">
+<g >
+<title>memcg_kmem_put_cache (87 samples, 0.04%)</title><rect x="514.6" y="149" width="0.5" height="15.0" fill="rgb(240,126,48)" rx="2" ry="2" />
+<text  x="517.58" y="159.5" ></text>
+</g>
+<g >
+<title>__skb_try_recv_datagram (3,724 samples, 1.88%)</title><rect x="909.3" y="453" width="22.2" height="15.0" fill="rgb(243,177,19)" rx="2" ry="2" />
+<text  x="912.32" y="463.5" >_..</text>
+</g>
+<g >
+<title>apparmor_socket_recvmsg (73 samples, 0.04%)</title><rect x="890.9" y="469" width="0.5" height="15.0" fill="rgb(212,37,53)" rx="2" ry="2" />
+<text  x="893.93" y="479.5" ></text>
+</g>
+<g >
+<title>ikcp_input (34 samples, 0.02%)</title><rect x="785.7" y="581" width="0.2" height="15.0" fill="rgb(208,34,20)" rx="2" ry="2" />
+<text  x="788.68" y="591.5" ></text>
+</g>
+<g >
+<title>common_file_perm (67 samples, 0.03%)</title><rect x="582.6" y="245" width="0.4" height="15.0" fill="rgb(221,224,1)" rx="2" ry="2" />
+<text  x="585.61" y="255.5" ></text>
+</g>
+<g >
+<title>muduo::CurrentThread::tid (69 samples, 0.03%)</title><rect x="789.2" y="565" width="0.4" height="15.0" fill="rgb(249,63,42)" rx="2" ry="2" />
+<text  x="792.19" y="575.5" ></text>
+</g>
+<g >
+<title>_cond_resched (29 samples, 0.01%)</title><rect x="1162.7" y="565" width="0.1" height="15.0" fill="rgb(206,31,6)" rx="2" ry="2" />
+<text  x="1165.66" y="575.5" ></text>
+</g>
+<g >
+<title>ikcp_malloc (27 samples, 0.01%)</title><rect x="719.4" y="549" width="0.2" height="15.0" fill="rgb(250,169,43)" rx="2" ry="2" />
+<text  x="722.43" y="559.5" ></text>
+</g>
+<g >
+<title>std::__addressof&lt;SessionBenchmark::Initialize (106 samples, 0.05%)</title><rect x="588.1" y="357" width="0.6" height="15.0" fill="rgb(248,1,32)" rx="2" ry="2" />
+<text  x="591.08" y="367.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (487 samples, 0.25%)</title><rect x="653.4" y="517" width="2.9" height="15.0" fill="rgb(250,226,32)" rx="2" ry="2" />
+<text  x="656.41" y="527.5" ></text>
+</g>
+<g >
+<title>ikcp_parse_fastack (66 samples, 0.03%)</title><rect x="730.6" y="549" width="0.4" height="15.0" fill="rgb(206,3,50)" rx="2" ry="2" />
+<text  x="733.58" y="559.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (38 samples, 0.02%)</title><rect x="1138.5" y="597" width="0.3" height="15.0" fill="rgb(213,92,47)" rx="2" ry="2" />
+<text  x="1141.53" y="607.5" ></text>
+</g>
+<g >
+<title>ikcp_malloc (66 samples, 0.03%)</title><rect x="620.8" y="405" width="0.4" height="15.0" fill="rgb(208,205,32)" rx="2" ry="2" />
+<text  x="623.79" y="415.5" ></text>
+</g>
+<g >
+<title>ikcp_parse_ack (18 samples, 0.01%)</title><rect x="754.9" y="565" width="0.1" height="15.0" fill="rgb(229,98,46)" rx="2" ry="2" />
+<text  x="757.85" y="575.5" ></text>
+</g>
+<g >
+<title>security_file_permission (1,017 samples, 0.51%)</title><rect x="577.0" y="261" width="6.0" height="15.0" fill="rgb(215,53,21)" rx="2" ry="2" />
+<text  x="579.95" y="271.5" ></text>
+</g>
+<g >
+<title>std::__get_helper&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (1,078 samples, 0.54%)</title><rect x="777.4" y="517" width="6.4" height="15.0" fill="rgb(226,74,50)" rx="2" ry="2" />
+<text  x="780.42" y="527.5" ></text>
+</g>
+<g >
+<title>std::__atomic_base&lt;unsigned long&gt;::operator+= (208 samples, 0.10%)</title><rect x="647.7" y="485" width="1.2" height="15.0" fill="rgb(214,95,26)" rx="2" ry="2" />
+<text  x="650.69" y="495.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;KCPSession&gt;::~shared_ptr (624 samples, 0.31%)</title><rect x="652.6" y="549" width="3.7" height="15.0" fill="rgb(240,81,45)" rx="2" ry="2" />
+<text  x="655.60" y="559.5" ></text>
+</g>
+<g >
+<title>ikcp_write (1,750 samples, 0.88%)</title><rect x="611.3" y="437" width="10.4" height="15.0" fill="rgb(216,182,6)" rx="2" ry="2" />
+<text  x="614.26" y="447.5" ></text>
+</g>
+<g >
+<title>ikcp_malloc (40 samples, 0.02%)</title><rect x="738.5" y="533" width="0.2" height="15.0" fill="rgb(249,23,30)" rx="2" ry="2" />
+<text  x="741.46" y="543.5" ></text>
+</g>
+<g >
+<title>ep_item_poll.isra.12 (648 samples, 0.33%)</title><rect x="1157.4" y="565" width="3.9" height="15.0" fill="rgb(213,121,10)" rx="2" ry="2" />
+<text  x="1160.40" y="575.5" ></text>
+</g>
+<g >
+<title>__raw_callee_save___pv_queued_spin_unlock (176 samples, 0.09%)</title><rect x="908.3" y="453" width="1.0" height="15.0" fill="rgb(226,23,0)" rx="2" ry="2" />
+<text  x="911.27" y="463.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (95 samples, 0.05%)</title><rect x="1085.0" y="325" width="0.6" height="15.0" fill="rgb(237,95,32)" rx="2" ry="2" />
+<text  x="1088.00" y="335.5" ></text>
+</g>
+<g >
+<title>ikcp_segment_new (58 samples, 0.03%)</title><rect x="610.9" y="437" width="0.4" height="15.0" fill="rgb(216,123,35)" rx="2" ry="2" />
+<text  x="613.91" y="447.5" ></text>
+</g>
+<g >
+<title>__errno_location@plt (23 samples, 0.01%)</title><rect x="1112.7" y="677" width="0.1" height="15.0" fill="rgb(219,42,41)" rx="2" ry="2" />
+<text  x="1115.70" y="687.5" ></text>
+</g>
+<g >
+<title>get_mem_cgroup_from_mm (153 samples, 0.08%)</title><rect x="481.2" y="69" width="0.9" height="15.0" fill="rgb(244,72,17)" rx="2" ry="2" />
+<text  x="484.19" y="79.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;int, std::allocator&lt;int&gt; &gt;::operator[] (61 samples, 0.03%)</title><rect x="1106.4" y="613" width="0.4" height="15.0" fill="rgb(245,6,49)" rx="2" ry="2" />
+<text  x="1109.44" y="623.5" ></text>
+</g>
+<g >
+<title>__kmalloc_node_track_caller (5,570 samples, 2.81%)</title><rect x="459.4" y="133" width="33.2" height="15.0" fill="rgb(250,210,40)" rx="2" ry="2" />
+<text  x="462.43" y="143.5" >__..</text>
+</g>
+<g >
+<title>std::min&lt;unsigned long&gt; (37 samples, 0.02%)</title><rect x="631.6" y="453" width="0.2" height="15.0" fill="rgb(211,227,30)" rx="2" ry="2" />
+<text  x="634.60" y="463.5" ></text>
+</g>
+<g >
+<title>skb_set_owner_w (36 samples, 0.02%)</title><rect x="447.2" y="197" width="0.2" height="15.0" fill="rgb(240,145,2)" rx="2" ry="2" />
+<text  x="450.22" y="207.5" ></text>
+</g>
+<g >
+<title>__fdget_pos (56 samples, 0.03%)</title><rect x="849.0" y="565" width="0.4" height="15.0" fill="rgb(217,159,19)" rx="2" ry="2" />
+<text  x="852.04" y="575.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (170 samples, 0.09%)</title><rect x="912.9" y="437" width="1.0" height="15.0" fill="rgb(214,41,7)" rx="2" ry="2" />
+<text  x="915.87" y="447.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::Initialize (88,655 samples, 44.73%)</title><rect x="122.7" y="517" width="527.9" height="15.0" fill="rgb(208,171,51)" rx="2" ry="2" />
+<text  x="125.72" y="527.5" >SessionBenchmark::Initialize</text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (153 samples, 0.08%)</title><rect x="351.7" y="197" width="0.9" height="15.0" fill="rgb(226,204,50)" rx="2" ry="2" />
+<text  x="354.71" y="207.5" ></text>
+</g>
+<g >
+<title>ikcp_peeksize (817 samples, 0.41%)</title><rect x="755.3" y="565" width="4.8" height="15.0" fill="rgb(228,179,20)" rx="2" ry="2" />
+<text  x="758.26" y="575.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;muduo::net::InetAddress const&amp;&gt; (52 samples, 0.03%)</title><rect x="590.2" y="389" width="0.3" height="15.0" fill="rgb(240,119,11)" rx="2" ry="2" />
+<text  x="593.15" y="399.5" ></text>
+</g>
+<g >
+<title>ikcp_parse_data (1,694 samples, 0.85%)</title><rect x="720.5" y="549" width="10.1" height="15.0" fill="rgb(227,153,41)" rx="2" ry="2" />
+<text  x="723.49" y="559.5" ></text>
+</g>
+<g >
+<title>std::function&lt;void  (59,782 samples, 30.16%)</title><rect x="235.5" y="405" width="355.9" height="15.0" fill="rgb(248,183,29)" rx="2" ry="2" />
+<text  x="238.50" y="415.5" >std::function&lt;void </text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (21 samples, 0.01%)</title><rect x="653.3" y="517" width="0.1" height="15.0" fill="rgb(210,83,42)" rx="2" ry="2" />
+<text  x="656.29" y="527.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;std::shared_ptr&lt;KCPSession&gt; const&amp;&gt; (21 samples, 0.01%)</title><rect x="652.4" y="533" width="0.1" height="15.0" fill="rgb(220,16,35)" rx="2" ry="2" />
+<text  x="655.38" y="543.5" ></text>
+</g>
+<g >
+<title>sock_poll (479 samples, 0.24%)</title><rect x="1158.3" y="549" width="2.9" height="15.0" fill="rgb(228,203,6)" rx="2" ry="2" />
+<text  x="1161.35" y="559.5" ></text>
+</g>
+<g >
+<title>aa_sock_msg_perm (68 samples, 0.03%)</title><rect x="895.7" y="453" width="0.4" height="15.0" fill="rgb(230,177,53)" rx="2" ry="2" />
+<text  x="898.73" y="463.5" ></text>
+</g>
+<g >
+<title>memcg_kmem_charge_memcg (1,092 samples, 0.55%)</title><rect x="482.1" y="69" width="6.5" height="15.0" fill="rgb(227,180,51)" rx="2" ry="2" />
+<text  x="485.10" y="79.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;unsigned long&gt; (17 samples, 0.01%)</title><rect x="235.3" y="405" width="0.1" height="15.0" fill="rgb(224,220,39)" rx="2" ry="2" />
+<text  x="238.27" y="415.5" ></text>
+</g>
+<g >
+<title>muduo::Logger::logLevel (30 samples, 0.02%)</title><rect x="622.0" y="453" width="0.2" height="15.0" fill="rgb(205,186,27)" rx="2" ry="2" />
+<text  x="625.05" y="463.5" ></text>
+</g>
+<g >
+<title>kfree_skbmem (35 samples, 0.02%)</title><rect x="1086.2" y="437" width="0.3" height="15.0" fill="rgb(211,46,48)" rx="2" ry="2" />
+<text  x="1089.24" y="447.5" ></text>
+</g>
+<g >
+<title>ikcp_output (322 samples, 0.16%)</title><rect x="594.2" y="453" width="1.9" height="15.0" fill="rgb(227,102,49)" rx="2" ry="2" />
+<text  x="597.17" y="463.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::loop (456 samples, 0.23%)</title><rect x="1109.5" y="661" width="2.7" height="15.0" fill="rgb(235,74,2)" rx="2" ry="2" />
+<text  x="1112.53" y="671.5" ></text>
+</g>
+<g >
+<title>__pthread_mutex_lock (481 samples, 0.24%)</title><rect x="10.5" y="661" width="2.9" height="15.0" fill="rgb(242,5,52)" rx="2" ry="2" />
+<text  x="13.49" y="671.5" ></text>
+</g>
+<g >
+<title>muduo::Timestamp::microSecondsSinceEpoch (22 samples, 0.01%)</title><rect x="134.7" y="437" width="0.1" height="15.0" fill="rgb(246,43,15)" rx="2" ry="2" />
+<text  x="137.67" y="447.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::doPendingFunctors (146 samples, 0.07%)</title><rect x="1108.7" y="661" width="0.8" height="15.0" fill="rgb(228,142,34)" rx="2" ry="2" />
+<text  x="1111.66" y="671.5" ></text>
+</g>
+<g >
+<title>KCPSession::OnKCPOutput (61,016 samples, 30.79%)</title><rect x="228.1" y="421" width="363.3" height="15.0" fill="rgb(240,72,22)" rx="2" ry="2" />
+<text  x="231.15" y="431.5" >KCPSession::OnKCPOutput</text>
+</g>
+<g >
+<title>_cond_resched (110 samples, 0.06%)</title><rect x="570.8" y="181" width="0.6" height="15.0" fill="rgb(230,139,26)" rx="2" ry="2" />
+<text  x="573.78" y="191.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_Base_manager&lt;SessionBenchmark::Initialize (19 samples, 0.01%)</title><rect x="243.7" y="389" width="0.1" height="15.0" fill="rgb(241,105,5)" rx="2" ry="2" />
+<text  x="246.68" y="399.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::SendData (2,111 samples, 1.07%)</title><rect x="254.8" y="357" width="12.5" height="15.0" fill="rgb(216,3,47)" rx="2" ry="2" />
+<text  x="257.76" y="367.5" ></text>
+</g>
+<g >
+<title>vfs_write (46,225 samples, 23.32%)</title><rect x="308.0" y="293" width="275.2" height="15.0" fill="rgb(211,176,52)" rx="2" ry="2" />
+<text  x="311.01" y="303.5" >vfs_write</text>
+</g>
+<g >
+<title>ikcp_flush (71,067 samples, 35.86%)</title><rect x="169.6" y="453" width="423.2" height="15.0" fill="rgb(223,10,53)" rx="2" ry="2" />
+<text  x="172.64" y="463.5" >ikcp_flush</text>
+</g>
+<g >
+<title>sys_epoll_wait (7,247 samples, 3.66%)</title><rect x="1135.0" y="629" width="43.1" height="15.0" fill="rgb(212,69,27)" rx="2" ry="2" />
+<text  x="1137.97" y="639.5" >sys_..</text>
+</g>
+<g >
+<title>std::__shared_count&lt; (534 samples, 0.27%)</title><rect x="112.0" y="501" width="3.2" height="15.0" fill="rgb(210,26,38)" rx="2" ry="2" />
+<text  x="115.01" y="511.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access&lt;SessionBenchmark::Initialize (171 samples, 0.09%)</title><rect x="587.1" y="357" width="1.0" height="15.0" fill="rgb(225,46,13)" rx="2" ry="2" />
+<text  x="590.06" y="367.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (49,902 samples, 25.18%)</title><rect x="286.4" y="341" width="297.1" height="15.0" fill="rgb(220,87,22)" rx="2" ry="2" />
+<text  x="289.40" y="351.5" >entry_SYSCALL_64_after_hwframe</text>
+</g>
+<g >
+<title>ikcp_input (10,811 samples, 5.45%)</title><rect x="681.6" y="565" width="64.4" height="15.0" fill="rgb(245,192,38)" rx="2" ry="2" />
+<text  x="684.60" y="575.5" >ikcp_in..</text>
+</g>
+<g >
+<title>__free_pages (3,032 samples, 1.53%)</title><rect x="1020.8" y="357" width="18.0" height="15.0" fill="rgb(232,14,2)" rx="2" ry="2" />
+<text  x="1023.75" y="367.5" ></text>
+</g>
+<g >
+<title>ikcp_output (61,900 samples, 31.23%)</title><rect x="223.9" y="437" width="368.6" height="15.0" fill="rgb(205,103,54)" rx="2" ry="2" />
+<text  x="226.93" y="447.5" >ikcp_output</text>
+</g>
+<g >
+<title>_cond_resched (39 samples, 0.02%)</title><rect x="931.5" y="453" width="0.2" height="15.0" fill="rgb(245,39,39)" rx="2" ry="2" />
+<text  x="934.49" y="463.5" ></text>
+</g>
+<g >
+<title>KCPSession::FlushTxQueue (102 samples, 0.05%)</title><rect x="128.9" y="469" width="0.6" height="15.0" fill="rgb(218,198,12)" rx="2" ry="2" />
+<text  x="131.90" y="479.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::assertInLoopThread (137 samples, 0.07%)</title><rect x="629.1" y="453" width="0.8" height="15.0" fill="rgb(252,135,16)" rx="2" ry="2" />
+<text  x="632.12" y="463.5" ></text>
+</g>
+<g >
+<title>_cond_resched (21 samples, 0.01%)</title><rect x="493.8" y="149" width="0.1" height="15.0" fill="rgb(222,146,3)" rx="2" ry="2" />
+<text  x="496.82" y="159.5" ></text>
+</g>
+<g >
+<title>skb_put (64 samples, 0.03%)</title><rect x="434.6" y="197" width="0.3" height="15.0" fill="rgb(214,173,26)" rx="2" ry="2" />
+<text  x="437.56" y="207.5" ></text>
+</g>
+<g >
+<title>sock_def_readable (6,285 samples, 3.17%)</title><rect x="520.7" y="197" width="37.5" height="15.0" fill="rgb(245,175,31)" rx="2" ry="2" />
+<text  x="523.75" y="207.5" >soc..</text>
+</g>
+<g >
+<title>kmem_cache_free (1,066 samples, 0.54%)</title><rect x="1006.7" y="405" width="6.4" height="15.0" fill="rgb(243,153,38)" rx="2" ry="2" />
+<text  x="1009.73" y="415.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::writableBytes (41 samples, 0.02%)</title><rect x="110.0" y="549" width="0.3" height="15.0" fill="rgb(215,183,19)" rx="2" ry="2" />
+<text  x="113.04" y="559.5" ></text>
+</g>
+<g >
+<title>std::atomic&lt;bool&gt;::operator bool (139 samples, 0.07%)</title><rect x="765.1" y="565" width="0.8" height="15.0" fill="rgb(220,53,48)" rx="2" ry="2" />
+<text  x="768.10" y="575.5" ></text>
+</g>
+<g >
+<title>skb_release_data (4,169 samples, 2.10%)</title><rect x="1014.0" y="405" width="24.8" height="15.0" fill="rgb(227,188,25)" rx="2" ry="2" />
+<text  x="1017.02" y="415.5" >s..</text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::_M_ptr (28 samples, 0.01%)</title><rect x="110.7" y="549" width="0.1" height="15.0" fill="rgb(237,86,6)" rx="2" ry="2" />
+<text  x="113.67" y="559.5" ></text>
+</g>
+<g >
+<title>__zone_watermark_ok (121 samples, 0.06%)</title><rect x="479.5" y="69" width="0.7" height="15.0" fill="rgb(245,12,42)" rx="2" ry="2" />
+<text  x="482.51" y="79.5" ></text>
+</g>
+<g >
+<title>KCPSession::peer_address (33 samples, 0.02%)</title><rect x="591.4" y="421" width="0.2" height="15.0" fill="rgb(223,142,43)" rx="2" ry="2" />
+<text  x="594.43" y="431.5" ></text>
+</g>
+<g >
+<title>KCPSession::CurrentMs (103 samples, 0.05%)</title><rect x="134.2" y="453" width="0.6" height="15.0" fill="rgb(237,118,38)" rx="2" ry="2" />
+<text  x="137.19" y="463.5" ></text>
+</g>
+<g >
+<title>skb_copy_datagram_from_iter (30 samples, 0.02%)</title><rect x="331.2" y="213" width="0.2" height="15.0" fill="rgb(252,3,18)" rx="2" ry="2" />
+<text  x="334.19" y="223.5" ></text>
+</g>
+<g >
+<title>rw_verify_area (91 samples, 0.05%)</title><rect x="862.2" y="549" width="0.6" height="15.0" fill="rgb(235,142,22)" rx="2" ry="2" />
+<text  x="865.25" y="559.5" ></text>
+</g>
+<g >
+<title>ikcp_ack_push (30 samples, 0.02%)</title><rect x="681.1" y="565" width="0.2" height="15.0" fill="rgb(231,37,17)" rx="2" ry="2" />
+<text  x="684.09" y="575.5" ></text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::_M_ptr (2,360 samples, 1.19%)</title><rect x="769.8" y="549" width="14.0" height="15.0" fill="rgb(232,130,41)" rx="2" ry="2" />
+<text  x="772.79" y="559.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::Initialize (90 samples, 0.05%)</title><rect x="20.0" y="645" width="0.6" height="15.0" fill="rgb(210,122,44)" rx="2" ry="2" />
+<text  x="23.01" y="655.5" ></text>
+</g>
+<g >
+<title>security_unix_may_send (28 samples, 0.01%)</title><rect x="330.8" y="213" width="0.2" height="15.0" fill="rgb(218,205,1)" rx="2" ry="2" />
+<text  x="333.84" y="223.5" ></text>
+</g>
+<g >
+<title>__errno_location (33 samples, 0.02%)</title><rect x="1112.5" y="677" width="0.2" height="15.0" fill="rgb(237,121,42)" rx="2" ry="2" />
+<text  x="1115.51" y="687.5" ></text>
+</g>
+<g >
+<title>maybe_add_creds (76 samples, 0.04%)</title><rect x="326.7" y="213" width="0.4" height="15.0" fill="rgb(242,81,38)" rx="2" ry="2" />
+<text  x="329.67" y="223.5" ></text>
+</g>
+<g >
+<title>KCPSession::ProcessPacketInLoopThread (123,581 samples, 62.35%)</title><rect x="49.9" y="581" width="735.8" height="15.0" fill="rgb(253,208,17)" rx="2" ry="2" />
+<text  x="52.89" y="591.5" >KCPSession::ProcessPacketInLoopThread</text>
+</g>
+<g >
+<title>[unknown] (77 samples, 0.04%)</title><rect x="10.0" y="629" width="0.5" height="15.0" fill="rgb(210,124,12)" rx="2" ry="2" />
+<text  x="13.00" y="639.5" ></text>
+</g>
+<g >
+<title>consume_skb (46 samples, 0.02%)</title><rect x="933.9" y="453" width="0.2" height="15.0" fill="rgb(208,181,8)" rx="2" ry="2" />
+<text  x="936.87" y="463.5" ></text>
+</g>
+<g >
+<title>rcu_all_qs (18 samples, 0.01%)</title><rect x="571.4" y="181" width="0.1" height="15.0" fill="rgb(232,161,54)" rx="2" ry="2" />
+<text  x="574.43" y="191.5" ></text>
+</g>
+<g >
+<title>__vdso_gettimeofday (791 samples, 0.40%)</title><rect x="1183.8" y="661" width="4.7" height="15.0" fill="rgb(237,44,4)" rx="2" ry="2" />
+<text  x="1186.78" y="671.5" ></text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (286 samples, 0.14%)</title><rect x="103.5" y="517" width="1.7" height="15.0" fill="rgb(226,22,18)" rx="2" ry="2" />
+<text  x="106.55" y="527.5" ></text>
+</g>
+<g >
+<title>select_estimate_accuracy (1,046 samples, 0.53%)</title><rect x="1171.3" y="597" width="6.3" height="15.0" fill="rgb(223,118,3)" rx="2" ry="2" />
+<text  x="1174.33" y="607.5" ></text>
+</g>
+<g >
+<title>_cond_resched (138 samples, 0.07%)</title><rect x="939.0" y="437" width="0.8" height="15.0" fill="rgb(231,116,8)" rx="2" ry="2" />
+<text  x="942.02" y="447.5" ></text>
+</g>
+<g >
+<title>KCPSession::OnReadEvent (99,393 samples, 50.15%)</title><rect x="66.3" y="565" width="591.7" height="15.0" fill="rgb(233,44,24)" rx="2" ry="2" />
+<text  x="69.26" y="575.5" >KCPSession::OnReadEvent</text>
+</g>
+<g >
+<title>kmalloc_slab (72 samples, 0.04%)</title><rect x="489.0" y="117" width="0.4" height="15.0" fill="rgb(226,159,14)" rx="2" ry="2" />
+<text  x="492.00" y="127.5" ></text>
+</g>
+<g >
+<title>fsnotify (63 samples, 0.03%)</title><rect x="1091.9" y="517" width="0.3" height="15.0" fill="rgb(221,176,24)" rx="2" ry="2" />
+<text  x="1094.86" y="527.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (35 samples, 0.02%)</title><rect x="932.6" y="453" width="0.2" height="15.0" fill="rgb(212,101,51)" rx="2" ry="2" />
+<text  x="935.59" y="463.5" ></text>
+</g>
+<g >
+<title>std::atomic&lt;bool&gt;::operator bool (126 samples, 0.06%)</title><rect x="136.9" y="437" width="0.7" height="15.0" fill="rgb(210,125,5)" rx="2" ry="2" />
+<text  x="139.86" y="447.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (344 samples, 0.17%)</title><rect x="654.3" y="501" width="2.0" height="15.0" fill="rgb(215,29,29)" rx="2" ry="2" />
+<text  x="657.26" y="511.5" ></text>
+</g>
+<g >
+<title>_copy_from_iter (5,714 samples, 2.88%)</title><rect x="399.9" y="181" width="34.0" height="15.0" fill="rgb(239,134,3)" rx="2" ry="2" />
+<text  x="402.92" y="191.5" >_c..</text>
+</g>
+<g >
+<title>get_mem_cgroup_from_mm (136 samples, 0.07%)</title><rect x="491.5" y="101" width="0.8" height="15.0" fill="rgb(221,94,24)" rx="2" ry="2" />
+<text  x="494.47" y="111.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (20 samples, 0.01%)</title><rect x="622.5" y="437" width="0.1" height="15.0" fill="rgb(236,120,21)" rx="2" ry="2" />
+<text  x="625.52" y="447.5" ></text>
+</g>
+<g >
+<title>unix_dgram_poll (237 samples, 0.12%)</title><rect x="1159.8" y="533" width="1.4" height="15.0" fill="rgb(226,132,9)" rx="2" ry="2" />
+<text  x="1162.79" y="543.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::isInLoopThread (406 samples, 0.20%)</title><rect x="787.2" y="581" width="2.4" height="15.0" fill="rgb(222,89,2)" rx="2" ry="2" />
+<text  x="790.19" y="591.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock (38 samples, 0.02%)</title><rect x="326.2" y="213" width="0.2" height="15.0" fill="rgb(211,19,40)" rx="2" ry="2" />
+<text  x="329.22" y="223.5" ></text>
+</g>
+<g >
+<title>skb_free_datagram (13,759 samples, 6.94%)</title><rect x="1004.8" y="453" width="81.9" height="15.0" fill="rgb(217,210,48)" rx="2" ry="2" />
+<text  x="1007.79" y="463.5" >skb_free_..</text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;KCPSession,  (23 samples, 0.01%)</title><rect x="793.3" y="581" width="0.1" height="15.0" fill="rgb(205,200,44)" rx="2" ry="2" />
+<text  x="796.26" y="591.5" ></text>
+</g>
+<g >
+<title>ikcp_ack_get (344 samples, 0.17%)</title><rect x="198.3" y="437" width="2.0" height="15.0" fill="rgb(239,196,45)" rx="2" ry="2" />
+<text  x="201.27" y="447.5" ></text>
+</g>
+<g >
+<title>__wake_up_sync_key (5,758 samples, 2.91%)</title><rect x="523.9" y="181" width="34.3" height="15.0" fill="rgb(236,36,29)" rx="2" ry="2" />
+<text  x="526.88" y="191.5" >__..</text>
+</g>
+<g >
+<title>copyout (54 samples, 0.03%)</title><rect x="1004.5" y="437" width="0.3" height="15.0" fill="rgb(230,129,28)" rx="2" ry="2" />
+<text  x="1007.47" y="447.5" ></text>
+</g>
+<g >
+<title>page_counter_cancel (53 samples, 0.03%)</title><rect x="1033.9" y="309" width="0.3" height="15.0" fill="rgb(227,1,20)" rx="2" ry="2" />
+<text  x="1036.93" y="319.5" ></text>
+</g>
+<g >
+<title>ikcp_need_drain (1,493 samples, 0.75%)</title><rect x="746.0" y="565" width="8.9" height="15.0" fill="rgb(220,34,13)" rx="2" ry="2" />
+<text  x="748.96" y="575.5" ></text>
+</g>
+<g >
+<title>muduo::net::EPollPoller::poll (59 samples, 0.03%)</title><rect x="1108.3" y="661" width="0.4" height="15.0" fill="rgb(223,106,11)" rx="2" ry="2" />
+<text  x="1111.31" y="671.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::isInLoopThread (20 samples, 0.01%)</title><rect x="762.9" y="565" width="0.1" height="15.0" fill="rgb(215,194,35)" rx="2" ry="2" />
+<text  x="765.87" y="575.5" ></text>
+</g>
+<g >
+<title>muduo::Timestamp::now (1,140 samples, 0.58%)</title><rect x="622.3" y="453" width="6.8" height="15.0" fill="rgb(207,145,36)" rx="2" ry="2" />
+<text  x="625.33" y="463.5" ></text>
+</g>
+<g >
+<title>memcg_kmem_put_cache (27 samples, 0.01%)</title><rect x="511.9" y="133" width="0.2" height="15.0" fill="rgb(241,22,31)" rx="2" ry="2" />
+<text  x="514.90" y="143.5" ></text>
+</g>
+<g >
+<title>ikcp_peeksize (415 samples, 0.21%)</title><rect x="100.8" y="533" width="2.5" height="15.0" fill="rgb(247,24,34)" rx="2" ry="2" />
+<text  x="103.81" y="543.5" ></text>
+</g>
+<g >
+<title>__cgroup_bpf_run_filter_skb (323 samples, 0.16%)</title><rect x="383.6" y="181" width="1.9" height="15.0" fill="rgb(245,166,50)" rx="2" ry="2" />
+<text  x="386.59" y="191.5" ></text>
+</g>
+<g >
+<title>ikcp_waitsnd (76 samples, 0.04%)</title><rect x="166.5" y="421" width="0.5" height="15.0" fill="rgb(205,159,46)" rx="2" ry="2" />
+<text  x="169.50" y="431.5" ></text>
+</g>
+<g >
+<title>std::__get_helper&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (20 samples, 0.01%)</title><rect x="657.0" y="517" width="0.1" height="15.0" fill="rgb(228,38,25)" rx="2" ry="2" />
+<text  x="659.96" y="527.5" ></text>
+</g>
+<g >
+<title>page_counter_try_charge (22 samples, 0.01%)</title><rect x="488.6" y="69" width="0.1" height="15.0" fill="rgb(206,171,7)" rx="2" ry="2" />
+<text  x="491.60" y="79.5" ></text>
+</g>
+<g >
+<title>__wake_up_common_lock (27 samples, 0.01%)</title><rect x="523.7" y="181" width="0.2" height="15.0" fill="rgb(240,120,29)" rx="2" ry="2" />
+<text  x="526.72" y="191.5" ></text>
+</g>
+<g >
+<title>epoll_wait (8,749 samples, 4.41%)</title><rect x="1126.1" y="677" width="52.1" height="15.0" fill="rgb(251,199,11)" rx="2" ry="2" />
+<text  x="1129.14" y="687.5" >epoll..</text>
+</g>
+<g >
+<title>std::atomic&lt;bool&gt;::operator bool (1,042 samples, 0.53%)</title><rect x="59.7" y="549" width="6.2" height="15.0" fill="rgb(209,149,35)" rx="2" ry="2" />
+<text  x="62.66" y="559.5" ></text>
+</g>
+<g >
+<title>ikcp_available_wnd_in_mss (304 samples, 0.15%)</title><rect x="165.1" y="437" width="1.9" height="15.0" fill="rgb(234,80,34)" rx="2" ry="2" />
+<text  x="168.14" y="447.5" ></text>
+</g>
+<g >
+<title>std::function&lt;void  (19 samples, 0.01%)</title><rect x="592.4" y="421" width="0.1" height="15.0" fill="rgb(239,35,1)" rx="2" ry="2" />
+<text  x="595.36" y="431.5" ></text>
+</g>
+<g >
+<title>sock_read_iter (34,405 samples, 17.36%)</title><rect x="882.1" y="501" width="204.8" height="15.0" fill="rgb(254,204,24)" rx="2" ry="2" />
+<text  x="885.06" y="511.5" >sock_read_iter</text>
+</g>
+<g >
+<title>copy_user_enhanced_fast_string (4,482 samples, 2.26%)</title><rect x="403.0" y="165" width="26.7" height="15.0" fill="rgb(239,61,1)" rx="2" ry="2" />
+<text  x="406.01" y="175.5" >c..</text>
+</g>
+<g >
+<title>aa_sock_msg_perm (102 samples, 0.05%)</title><rect x="330.1" y="181" width="0.6" height="15.0" fill="rgb(222,151,45)" rx="2" ry="2" />
+<text  x="333.11" y="191.5" ></text>
+</g>
+<g >
+<title>sock_sendmsg (29 samples, 0.01%)</title><rect x="319.7" y="245" width="0.1" height="15.0" fill="rgb(218,59,34)" rx="2" ry="2" />
+<text  x="322.67" y="255.5" ></text>
+</g>
+<g >
+<title>std::get&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (126 samples, 0.06%)</title><rect x="657.1" y="517" width="0.7" height="15.0" fill="rgb(220,215,31)" rx="2" ry="2" />
+<text  x="660.08" y="527.5" ></text>
+</g>
+<g >
+<title>__vfs_write (43,394 samples, 21.89%)</title><rect x="314.2" y="277" width="258.4" height="15.0" fill="rgb(243,156,26)" rx="2" ry="2" />
+<text  x="317.20" y="287.5" >__vfs_write</text>
+</g>
+<g >
+<title>__cgroup_bpf_run_filter_skb (28 samples, 0.01%)</title><rect x="343.1" y="197" width="0.2" height="15.0" fill="rgb(252,25,29)" rx="2" ry="2" />
+<text  x="346.13" y="207.5" ></text>
+</g>
+<g >
+<title>kfree_skbmem (1,178 samples, 0.59%)</title><rect x="1006.1" y="421" width="7.0" height="15.0" fill="rgb(245,118,9)" rx="2" ry="2" />
+<text  x="1009.06" y="431.5" ></text>
+</g>
+<g >
+<title>ikcp_free (30 samples, 0.02%)</title><rect x="736.1" y="533" width="0.1" height="15.0" fill="rgb(214,141,28)" rx="2" ry="2" />
+<text  x="739.05" y="543.5" ></text>
+</g>
+<g >
+<title>rcu_all_qs (58 samples, 0.03%)</title><rect x="939.5" y="421" width="0.3" height="15.0" fill="rgb(238,36,40)" rx="2" ry="2" />
+<text  x="942.50" y="431.5" ></text>
+</g>
+<g >
+<title>__wake_up_common_lock (5,273 samples, 2.66%)</title><rect x="1053.5" y="325" width="31.4" height="15.0" fill="rgb(220,175,28)" rx="2" ry="2" />
+<text  x="1056.47" y="335.5" >__..</text>
+</g>
+<g >
+<title>muduo::net::EPollPoller::fillActiveChannels (24 samples, 0.01%)</title><rect x="1188.5" y="677" width="0.1" height="15.0" fill="rgb(228,29,50)" rx="2" ry="2" />
+<text  x="1191.49" y="687.5" ></text>
+</g>
+<g >
+<title>apparmor_file_permission (85 samples, 0.04%)</title><rect x="1091.4" y="517" width="0.5" height="15.0" fill="rgb(232,25,30)" rx="2" ry="2" />
+<text  x="1094.35" y="527.5" ></text>
+</g>
+<g >
+<title>KCPSession::Write (87,172 samples, 43.98%)</title><rect x="126.8" y="485" width="519.0" height="15.0" fill="rgb(241,142,33)" rx="2" ry="2" />
+<text  x="129.80" y="495.5" >KCPSession::Write</text>
+</g>
+<g >
+<title>ikcp_segment_new (42 samples, 0.02%)</title><rect x="760.2" y="565" width="0.3" height="15.0" fill="rgb(210,186,46)" rx="2" ry="2" />
+<text  x="763.21" y="575.5" ></text>
+</g>
+<g >
+<title>aa_unix_msg_perm (29 samples, 0.01%)</title><rect x="897.2" y="421" width="0.2" height="15.0" fill="rgb(234,188,44)" rx="2" ry="2" />
+<text  x="900.19" y="431.5" ></text>
+</g>
+<g >
+<title>sys_read (59 samples, 0.03%)</title><rect x="1105.4" y="581" width="0.3" height="15.0" fill="rgb(209,185,26)" rx="2" ry="2" />
+<text  x="1108.40" y="591.5" ></text>
+</g>
+<g >
+<title>new_sync_write (21 samples, 0.01%)</title><rect x="575.3" y="277" width="0.1" height="15.0" fill="rgb(225,53,30)" rx="2" ry="2" />
+<text  x="578.30" y="287.5" ></text>
+</g>
+<g >
+<title>__indirect_thunk_start (21 samples, 0.01%)</title><rect x="1091.2" y="517" width="0.2" height="15.0" fill="rgb(215,112,54)" rx="2" ry="2" />
+<text  x="1094.23" y="527.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::retrieveAll (43 samples, 0.02%)</title><rect x="646.3" y="485" width="0.3" height="15.0" fill="rgb(251,20,9)" rx="2" ry="2" />
+<text  x="649.34" y="495.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::hasWritten (114 samples, 0.06%)</title><rect x="109.4" y="549" width="0.6" height="15.0" fill="rgb(234,132,51)" rx="2" ry="2" />
+<text  x="112.36" y="559.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__exchange_and_add_dispatch (287 samples, 0.14%)</title><rect x="654.5" y="485" width="1.7" height="15.0" fill="rgb(247,9,22)" rx="2" ry="2" />
+<text  x="657.50" y="495.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::Initialize (124 samples, 0.06%)</title><rect x="117.8" y="533" width="0.7" height="15.0" fill="rgb(247,77,20)" rx="2" ry="2" />
+<text  x="120.79" y="543.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;muduo::Timestamp&gt; (23 samples, 0.01%)</title><rect x="1108.1" y="629" width="0.1" height="15.0" fill="rgb(228,48,22)" rx="2" ry="2" />
+<text  x="1111.10" y="639.5" ></text>
+</g>
+<g >
+<title>std::__addressof&lt;SessionBenchmark::Initialize (33 samples, 0.02%)</title><rect x="588.7" y="373" width="0.2" height="15.0" fill="rgb(233,74,36)" rx="2" ry="2" />
+<text  x="591.71" y="383.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_M_empty (136 samples, 0.07%)</title><rect x="135.9" y="421" width="0.8" height="15.0" fill="rgb(254,158,53)" rx="2" ry="2" />
+<text  x="138.88" y="431.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;char, std::allocator&lt;char&gt; &gt;::size (37 samples, 0.02%)</title><rect x="109.7" y="517" width="0.2" height="15.0" fill="rgb(206,44,39)" rx="2" ry="2" />
+<text  x="112.73" y="527.5" ></text>
+</g>
+<g >
+<title>ep_item_poll.isra.12 (25 samples, 0.01%)</title><rect x="1151.7" y="581" width="0.2" height="15.0" fill="rgb(212,95,54)" rx="2" ry="2" />
+<text  x="1154.71" y="591.5" ></text>
+</g>
+<g >
+<title>pid_vnr (128 samples, 0.06%)</title><rect x="892.1" y="469" width="0.8" height="15.0" fill="rgb(235,169,5)" rx="2" ry="2" />
+<text  x="895.10" y="479.5" ></text>
+</g>
+<g >
+<title>__virt_addr_valid (808 samples, 0.41%)</title><rect x="955.4" y="421" width="4.8" height="15.0" fill="rgb(226,76,4)" rx="2" ry="2" />
+<text  x="958.44" y="431.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;unsigned int&gt; (63 samples, 0.03%)</title><rect x="589.4" y="373" width="0.4" height="15.0" fill="rgb(240,164,18)" rx="2" ry="2" />
+<text  x="592.43" y="383.5" ></text>
+</g>
+<g >
+<title>mutex_lock (44 samples, 0.02%)</title><rect x="891.4" y="469" width="0.2" height="15.0" fill="rgb(234,77,27)" rx="2" ry="2" />
+<text  x="894.37" y="479.5" ></text>
+</g>
+<g >
+<title>ep_send_events_proc (38 samples, 0.02%)</title><rect x="1163.7" y="597" width="0.2" height="15.0" fill="rgb(239,52,45)" rx="2" ry="2" />
+<text  x="1166.66" y="607.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr_access&lt;KCPSession,  (443 samples, 0.22%)</title><rect x="793.4" y="581" width="2.6" height="15.0" fill="rgb(236,12,32)" rx="2" ry="2" />
+<text  x="796.40" y="591.5" ></text>
+</g>
+<g >
+<title>security_unix_may_send (4,441 samples, 2.24%)</title><rect x="355.1" y="197" width="26.4" height="15.0" fill="rgb(239,186,35)" rx="2" ry="2" />
+<text  x="358.11" y="207.5" >s..</text>
+</g>
+<g >
+<title>std::_Head_base&lt;0ul, IKCPCB*, false&gt;::_M_head (304 samples, 0.15%)</title><rect x="782.0" y="485" width="1.8" height="15.0" fill="rgb(225,54,46)" rx="2" ry="2" />
+<text  x="785.03" y="495.5" ></text>
+</g>
+<g >
+<title>KCPReceivedPacket::RemainingBytes (71 samples, 0.04%)</title><rect x="57.4" y="565" width="0.5" height="15.0" fill="rgb(253,52,37)" rx="2" ry="2" />
+<text  x="60.45" y="575.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (23 samples, 0.01%)</title><rect x="1084.9" y="325" width="0.1" height="15.0" fill="rgb(254,143,43)" rx="2" ry="2" />
+<text  x="1087.87" y="335.5" ></text>
+</g>
+<g >
+<title>pid_vnr (525 samples, 0.26%)</title><rect x="943.3" y="453" width="3.2" height="15.0" fill="rgb(245,123,38)" rx="2" ry="2" />
+<text  x="946.35" y="463.5" ></text>
+</g>
+<g >
+<title>skb_free_head (55 samples, 0.03%)</title><rect x="1013.7" y="405" width="0.3" height="15.0" fill="rgb(249,92,2)" rx="2" ry="2" />
+<text  x="1016.69" y="415.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::doPendingFunctors (23 samples, 0.01%)</title><rect x="1189.9" y="677" width="0.1" height="15.0" fill="rgb(217,65,24)" rx="2" ry="2" />
+<text  x="1192.85" y="687.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_M_empty (30 samples, 0.02%)</title><rect x="234.7" y="405" width="0.2" height="15.0" fill="rgb(250,211,2)" rx="2" ry="2" />
+<text  x="237.70" y="415.5" ></text>
+</g>
+<g >
+<title>kmalloc_slab (19 samples, 0.01%)</title><rect x="493.5" y="133" width="0.1" height="15.0" fill="rgb(223,116,12)" rx="2" ry="2" />
+<text  x="496.45" y="143.5" ></text>
+</g>
+<g >
+<title>wait_for_unix_gc (346 samples, 0.17%)</title><rect x="569.5" y="197" width="2.0" height="15.0" fill="rgb(226,125,52)" rx="2" ry="2" />
+<text  x="572.48" y="207.5" ></text>
+</g>
+<g >
+<title>ikcp_reach_snd_hghwat (171 samples, 0.09%)</title><rect x="596.1" y="453" width="1.0" height="15.0" fill="rgb(247,102,43)" rx="2" ry="2" />
+<text  x="599.08" y="463.5" ></text>
+</g>
+<g >
+<title>rw_verify_area (66 samples, 0.03%)</title><rect x="307.6" y="293" width="0.4" height="15.0" fill="rgb(215,206,17)" rx="2" ry="2" />
+<text  x="310.62" y="303.5" ></text>
+</g>
+<g >
+<title>all (198,192 samples, 100%)</title><rect x="10.0" y="709" width="1180.0" height="15.0" fill="rgb(254,48,39)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" ></text>
+</g>
+<g >
+<title>sys_epoll_wait (18 samples, 0.01%)</title><rect x="1178.1" y="645" width="0.1" height="15.0" fill="rgb(236,195,37)" rx="2" ry="2" />
+<text  x="1181.12" y="655.5" ></text>
+</g>
+<g >
+<title>muduo::CurrentThread::tid (38 samples, 0.02%)</title><rect x="761.8" y="549" width="0.3" height="15.0" fill="rgb(225,117,49)" rx="2" ry="2" />
+<text  x="764.83" y="559.5" ></text>
+</g>
+<g >
+<title>__fsnotify_parent (27 samples, 0.01%)</title><rect x="1091.1" y="517" width="0.1" height="15.0" fill="rgb(234,116,46)" rx="2" ry="2" />
+<text  x="1094.07" y="527.5" ></text>
+</g>
+<g >
+<title>unix_dgram_recvmsg (32 samples, 0.02%)</title><rect x="1086.7" y="485" width="0.2" height="15.0" fill="rgb(205,36,7)" rx="2" ry="2" />
+<text  x="1089.71" y="495.5" ></text>
+</g>
+<g >
+<title>aa_unix_peer_perm (61 samples, 0.03%)</title><rect x="356.0" y="181" width="0.3" height="15.0" fill="rgb(245,205,49)" rx="2" ry="2" />
+<text  x="358.95" y="191.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (4,525 samples, 2.28%)</title><rect x="137.6" y="453" width="27.0" height="15.0" fill="rgb(229,37,50)" rx="2" ry="2" />
+<text  x="140.61" y="463.5" >_..</text>
+</g>
+<g >
+<title>unix_dgram_sendmsg (40,202 samples, 20.28%)</title><rect x="332.2" y="213" width="239.3" height="15.0" fill="rgb(228,146,15)" rx="2" ry="2" />
+<text  x="335.19" y="223.5" >unix_dgram_sendmsg</text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (182,677 samples, 92.17%)</title><rect x="20.6" y="645" width="1087.6" height="15.0" fill="rgb(211,115,24)" rx="2" ry="2" />
+<text  x="23.61" y="655.5" >std::_Function_handler&lt;void </text>
+</g>
+<g >
+<title>alloc_skb_with_frags (31 samples, 0.02%)</title><rect x="352.6" y="197" width="0.2" height="15.0" fill="rgb(233,199,27)" rx="2" ry="2" />
+<text  x="355.62" y="207.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access&lt;SessionBenchmark::Initialize (39 samples, 0.02%)</title><rect x="1107.7" y="613" width="0.3" height="15.0" fill="rgb(238,218,44)" rx="2" ry="2" />
+<text  x="1110.74" y="623.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (21 samples, 0.01%)</title><rect x="351.6" y="197" width="0.1" height="15.0" fill="rgb(211,171,1)" rx="2" ry="2" />
+<text  x="354.59" y="207.5" ></text>
+</g>
+<g >
+<title>aa_file_perm (46 samples, 0.02%)</title><rect x="1095.8" y="485" width="0.2" height="15.0" fill="rgb(207,113,4)" rx="2" ry="2" />
+<text  x="1098.77" y="495.5" ></text>
+</g>
+<g >
+<title>ikcp_canlog (91 samples, 0.05%)</title><rect x="591.8" y="421" width="0.6" height="15.0" fill="rgb(214,110,15)" rx="2" ry="2" />
+<text  x="594.81" y="431.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_Base_manager&lt;SessionBenchmark::Initialize (601 samples, 0.30%)</title><rect x="585.1" y="373" width="3.6" height="15.0" fill="rgb(210,169,30)" rx="2" ry="2" />
+<text  x="588.13" y="383.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::readableBytes (66 samples, 0.03%)</title><rect x="646.0" y="485" width="0.3" height="15.0" fill="rgb(220,84,10)" rx="2" ry="2" />
+<text  x="648.95" y="495.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::OnMessage (74 samples, 0.04%)</title><rect x="650.6" y="517" width="0.4" height="15.0" fill="rgb(232,184,22)" rx="2" ry="2" />
+<text  x="653.55" y="527.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::begin (261 samples, 0.13%)</title><rect x="106.4" y="533" width="1.6" height="15.0" fill="rgb(224,165,20)" rx="2" ry="2" />
+<text  x="109.40" y="543.5" ></text>
+</g>
+<g >
+<title>check_stack_object (36 samples, 0.02%)</title><rect x="960.2" y="421" width="0.3" height="15.0" fill="rgb(234,105,33)" rx="2" ry="2" />
+<text  x="963.25" y="431.5" ></text>
+</g>
+<g >
+<title>std::get&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (33 samples, 0.02%)</title><rect x="657.8" y="533" width="0.2" height="15.0" fill="rgb(214,223,23)" rx="2" ry="2" />
+<text  x="660.83" y="543.5" ></text>
+</g>
+<g >
+<title>__libc_write (53,106 samples, 26.80%)</title><rect x="267.3" y="357" width="316.2" height="15.0" fill="rgb(254,86,41)" rx="2" ry="2" />
+<text  x="270.32" y="367.5" >__libc_write</text>
+</g>
+<g >
+<title>_copy_to_iter (7,266 samples, 3.67%)</title><rect x="960.8" y="437" width="43.2" height="15.0" fill="rgb(237,49,33)" rx="2" ry="2" />
+<text  x="963.78" y="447.5" >_cop..</text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (4,175 samples, 2.11%)</title><rect x="69.0" y="549" width="24.8" height="15.0" fill="rgb(250,25,41)" rx="2" ry="2" />
+<text  x="71.97" y="559.5" >_..</text>
+</g>
+<g >
+<title>skb_copy_datagram_iter (40 samples, 0.02%)</title><rect x="897.6" y="469" width="0.2" height="15.0" fill="rgb(213,82,24)" rx="2" ry="2" />
+<text  x="900.57" y="479.5" ></text>
+</g>
+<g >
+<title>security_socket_sendmsg (23 samples, 0.01%)</title><rect x="324.7" y="229" width="0.1" height="15.0" fill="rgb(223,215,4)" rx="2" ry="2" />
+<text  x="327.68" y="239.5" ></text>
+</g>
+<g >
+<title>ikcp_malloc (29 samples, 0.01%)</title><rect x="620.2" y="421" width="0.2" height="15.0" fill="rgb(216,52,26)" rx="2" ry="2" />
+<text  x="623.24" y="431.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (29 samples, 0.01%)</title><rect x="234.9" y="405" width="0.2" height="15.0" fill="rgb(232,57,37)" rx="2" ry="2" />
+<text  x="237.88" y="415.5" ></text>
+</g>
+<g >
+<title>muduo::net::EPollPoller::poll (205 samples, 0.10%)</title><rect x="1188.6" y="677" width="1.3" height="15.0" fill="rgb(213,151,1)" rx="2" ry="2" />
+<text  x="1191.63" y="687.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::Initialize (274 samples, 0.14%)</title><rect x="242.1" y="389" width="1.6" height="15.0" fill="rgb(249,204,9)" rx="2" ry="2" />
+<text  x="245.05" y="399.5" ></text>
+</g>
+<g >
+<title>memcg_kmem_put_cache (28 samples, 0.01%)</title><rect x="493.7" y="133" width="0.1" height="15.0" fill="rgb(206,153,8)" rx="2" ry="2" />
+<text  x="496.65" y="143.5" ></text>
+</g>
+<g >
+<title>copyout (179 samples, 0.09%)</title><rect x="1003.0" y="421" width="1.0" height="15.0" fill="rgb(217,51,32)" rx="2" ry="2" />
+<text  x="1005.98" y="431.5" ></text>
+</g>
+<g >
+<title>rcu_all_qs (58 samples, 0.03%)</title><rect x="571.1" y="165" width="0.3" height="15.0" fill="rgb(217,24,25)" rx="2" ry="2" />
+<text  x="574.09" y="175.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (21 samples, 0.01%)</title><rect x="1112.3" y="661" width="0.1" height="15.0" fill="rgb(234,180,6)" rx="2" ry="2" />
+<text  x="1115.31" y="671.5" ></text>
+</g>
+<g >
+<title>ikcp_parse_ack (151 samples, 0.08%)</title><rect x="719.6" y="549" width="0.9" height="15.0" fill="rgb(252,53,37)" rx="2" ry="2" />
+<text  x="722.59" y="559.5" ></text>
+</g>
+<g >
+<title>mutex_lock (255 samples, 0.13%)</title><rect x="1161.4" y="581" width="1.5" height="15.0" fill="rgb(246,57,50)" rx="2" ry="2" />
+<text  x="1164.40" y="591.5" ></text>
+</g>
+<g >
+<title>std::function&lt;void  (175 samples, 0.09%)</title><rect x="135.6" y="437" width="1.1" height="15.0" fill="rgb(225,124,26)" rx="2" ry="2" />
+<text  x="138.65" y="447.5" ></text>
+</g>
+<g >
+<title>skb_copy_datagram_from_iter (7,871 samples, 3.97%)</title><rect x="387.7" y="197" width="46.9" height="15.0" fill="rgb(225,174,16)" rx="2" ry="2" />
+<text  x="390.70" y="207.5" >skb_..</text>
+</g>
+<g >
+<title>std::forward&lt;unsigned int&gt; (40 samples, 0.02%)</title><rect x="590.5" y="389" width="0.2" height="15.0" fill="rgb(225,154,6)" rx="2" ry="2" />
+<text  x="593.46" y="399.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__exchange_and_add (254 samples, 0.13%)</title><rect x="654.6" y="469" width="1.5" height="15.0" fill="rgb(226,213,18)" rx="2" ry="2" />
+<text  x="657.63" y="479.5" ></text>
+</g>
+<g >
+<title>mutex_unlock (22 samples, 0.01%)</title><rect x="1171.2" y="597" width="0.1" height="15.0" fill="rgb(210,126,17)" rx="2" ry="2" />
+<text  x="1174.20" y="607.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;int, std::allocator&lt;int&gt; &gt;::operator[] (198 samples, 0.10%)</title><rect x="264.6" y="341" width="1.2" height="15.0" fill="rgb(218,61,41)" rx="2" ry="2" />
+<text  x="267.59" y="351.5" ></text>
+</g>
+<g >
+<title>KCPReceivedPacket::~KCPReceivedPacket (259 samples, 0.13%)</title><rect x="42.7" y="597" width="1.5" height="15.0" fill="rgb(235,85,44)" rx="2" ry="2" />
+<text  x="45.66" y="607.5" ></text>
+</g>
+<g >
+<title>check_stack_object (35 samples, 0.02%)</title><rect x="399.5" y="165" width="0.2" height="15.0" fill="rgb(227,5,32)" rx="2" ry="2" />
+<text  x="402.46" y="175.5" ></text>
+</g>
+<g >
+<title>check_stack_object (71 samples, 0.04%)</title><rect x="1004.1" y="437" width="0.4" height="15.0" fill="rgb(234,86,16)" rx="2" ry="2" />
+<text  x="1007.05" y="447.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::get (3,230 samples, 1.63%)</title><rect x="766.4" y="565" width="19.3" height="15.0" fill="rgb(249,214,22)" rx="2" ry="2" />
+<text  x="769.44" y="575.5" ></text>
+</g>
+<g >
+<title>ikcp_ack_push (260 samples, 0.13%)</title><rect x="714.9" y="549" width="1.5" height="15.0" fill="rgb(215,134,30)" rx="2" ry="2" />
+<text  x="717.87" y="559.5" ></text>
+</g>
+<g >
+<title>_cond_resched (24 samples, 0.01%)</title><rect x="347.0" y="197" width="0.2" height="15.0" fill="rgb(234,136,37)" rx="2" ry="2" />
+<text  x="350.03" y="207.5" ></text>
+</g>
+<g >
+<title>__fget_light (698 samples, 0.35%)</title><rect x="856.0" y="533" width="4.1" height="15.0" fill="rgb(229,202,20)" rx="2" ry="2" />
+<text  x="858.97" y="543.5" ></text>
+</g>
+<g >
+<title>mutex_unlock (541 samples, 0.27%)</title><rect x="940.1" y="453" width="3.2" height="15.0" fill="rgb(232,18,32)" rx="2" ry="2" />
+<text  x="943.12" y="463.5" ></text>
+</g>
+<g >
+<title>ikcp_canlog (55 samples, 0.03%)</title><rect x="100.3" y="533" width="0.3" height="15.0" fill="rgb(235,184,41)" rx="2" ry="2" />
+<text  x="103.32" y="543.5" ></text>
+</g>
+<g >
+<title>timespec64_add_safe (27 samples, 0.01%)</title><rect x="1177.6" y="597" width="0.2" height="15.0" fill="rgb(247,213,45)" rx="2" ry="2" />
+<text  x="1180.60" y="607.5" ></text>
+</g>
+<g >
+<title>skb_queue_tail (36 samples, 0.02%)</title><rect x="331.7" y="213" width="0.2" height="15.0" fill="rgb(248,155,25)" rx="2" ry="2" />
+<text  x="334.71" y="223.5" ></text>
+</g>
+<g >
+<title>mutex_lock (1,004 samples, 0.51%)</title><rect x="934.1" y="453" width="6.0" height="15.0" fill="rgb(221,57,1)" rx="2" ry="2" />
+<text  x="937.15" y="463.5" ></text>
+</g>
+<g >
+<title>iov_iter_init (50 samples, 0.03%)</title><rect x="881.8" y="501" width="0.3" height="15.0" fill="rgb(253,23,33)" rx="2" ry="2" />
+<text  x="884.76" y="511.5" ></text>
+</g>
+<g >
+<title>sock_wfree (36 samples, 0.02%)</title><rect x="1039.9" y="389" width="0.2" height="15.0" fill="rgb(219,169,25)" rx="2" ry="2" />
+<text  x="1042.93" y="399.5" ></text>
+</g>
+<g >
+<title>sock_sendmsg (41,529 samples, 20.95%)</title><rect x="324.8" y="229" width="247.3" height="15.0" fill="rgb(223,92,37)" rx="2" ry="2" />
+<text  x="327.82" y="239.5" >sock_sendmsg</text>
+</g>
+<g >
+<title>KCPSession::IsClosed (155 samples, 0.08%)</title><rect x="136.7" y="453" width="0.9" height="15.0" fill="rgb(236,220,48)" rx="2" ry="2" />
+<text  x="139.69" y="463.5" ></text>
+</g>
+<g >
+<title>memcg_kmem_uncharge (881 samples, 0.44%)</title><rect x="1033.4" y="325" width="5.2" height="15.0" fill="rgb(236,213,46)" rx="2" ry="2" />
+<text  x="1036.40" y="335.5" ></text>
+</g>
+<g >
+<title>rcu_all_qs (47 samples, 0.02%)</title><rect x="939.8" y="437" width="0.3" height="15.0" fill="rgb(213,146,20)" rx="2" ry="2" />
+<text  x="942.84" y="447.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (37 samples, 0.02%)</title><rect x="1137.1" y="613" width="0.3" height="15.0" fill="rgb(214,69,18)" rx="2" ry="2" />
+<text  x="1140.13" y="623.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (369 samples, 0.19%)</title><rect x="113.0" y="485" width="2.2" height="15.0" fill="rgb(238,140,2)" rx="2" ry="2" />
+<text  x="115.99" y="495.5" ></text>
+</g>
+<g >
+<title>skb_copy_datagram_iter (9,796 samples, 4.94%)</title><rect x="946.5" y="453" width="58.3" height="15.0" fill="rgb(239,133,5)" rx="2" ry="2" />
+<text  x="949.47" y="463.5" >skb_co..</text>
+</g>
+<g >
+<title>apparmor_file_permission (803 samples, 0.41%)</title><rect x="577.8" y="245" width="4.8" height="15.0" fill="rgb(213,198,26)" rx="2" ry="2" />
+<text  x="580.83" y="255.5" ></text>
+</g>
+<g >
+<title>pvclock_clocksource_read (1,018 samples, 0.51%)</title><rect x="1165.0" y="565" width="6.1" height="15.0" fill="rgb(245,107,19)" rx="2" ry="2" />
+<text  x="1168.01" y="575.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::assertInLoopThread (43 samples, 0.02%)</title><rect x="786.9" y="581" width="0.3" height="15.0" fill="rgb(222,53,52)" rx="2" ry="2" />
+<text  x="789.93" y="591.5" ></text>
+</g>
+<g >
+<title>__fget_light (113 samples, 0.06%)</title><rect x="306.5" y="293" width="0.6" height="15.0" fill="rgb(229,133,21)" rx="2" ry="2" />
+<text  x="309.47" y="303.5" ></text>
+</g>
+<g >
+<title>ikcp_shrink_buf (229 samples, 0.12%)</title><rect x="739.6" y="549" width="1.4" height="15.0" fill="rgb(205,166,9)" rx="2" ry="2" />
+<text  x="742.60" y="559.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (23 samples, 0.01%)</title><rect x="480.2" y="69" width="0.2" height="15.0" fill="rgb(246,63,34)" rx="2" ry="2" />
+<text  x="483.23" y="79.5" ></text>
+</g>
+<g >
+<title>apparmor_socket_getpeersec_dgram (23 samples, 0.01%)</title><rect x="352.8" y="197" width="0.1" height="15.0" fill="rgb(249,85,31)" rx="2" ry="2" />
+<text  x="355.81" y="207.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::OnMessage (88,258 samples, 44.53%)</title><rect x="124.1" y="501" width="525.4" height="15.0" fill="rgb(244,147,11)" rx="2" ry="2" />
+<text  x="127.06" y="511.5" >SessionBenchmark::OnMessage</text>
+</g>
+<g >
+<title>ikcp_recv (1,941 samples, 0.98%)</title><rect x="94.0" y="549" width="11.5" height="15.0" fill="rgb(216,82,18)" rx="2" ry="2" />
+<text  x="96.95" y="559.5" ></text>
+</g>
+<g >
+<title>page_counter_cancel (681 samples, 0.34%)</title><rect x="1034.6" y="293" width="4.0" height="15.0" fill="rgb(216,76,4)" rx="2" ry="2" />
+<text  x="1037.59" y="303.5" ></text>
+</g>
+<g >
+<title>unix_dgram_sendmsg (43 samples, 0.02%)</title><rect x="572.1" y="229" width="0.2" height="15.0" fill="rgb(215,31,18)" rx="2" ry="2" />
+<text  x="575.08" y="239.5" ></text>
+</g>
+<g >
+<title>ktime_get_ts64 (23 samples, 0.01%)</title><rect x="1177.8" y="613" width="0.2" height="15.0" fill="rgb(222,64,11)" rx="2" ry="2" />
+<text  x="1180.83" y="623.5" ></text>
+</g>
+<g >
+<title>KCPReceivedPacket::~KCPReceivedPacket (78 samples, 0.04%)</title><rect x="24.6" y="613" width="0.5" height="15.0" fill="rgb(243,33,1)" rx="2" ry="2" />
+<text  x="27.62" y="623.5" ></text>
+</g>
+<g >
+<title>__errno_location (38 samples, 0.02%)</title><rect x="799.5" y="613" width="0.3" height="15.0" fill="rgb(219,24,16)" rx="2" ry="2" />
+<text  x="802.54" y="623.5" ></text>
+</g>
+<g >
+<title>std::_Head_base&lt;0ul, IKCPCB*, false&gt;::_M_head (33 samples, 0.02%)</title><rect x="657.6" y="469" width="0.2" height="15.0" fill="rgb(236,67,9)" rx="2" ry="2" />
+<text  x="660.63" y="479.5" ></text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt;::_M_head (632 samples, 0.32%)</title><rect x="780.1" y="501" width="3.7" height="15.0" fill="rgb(227,227,17)" rx="2" ry="2" />
+<text  x="783.07" y="511.5" ></text>
+</g>
+<g >
+<title>fsnotify (461 samples, 0.23%)</title><rect x="572.6" y="277" width="2.7" height="15.0" fill="rgb(237,12,54)" rx="2" ry="2" />
+<text  x="575.56" y="287.5" ></text>
+</g>
+<g >
+<title>page_counter_uncharge (19 samples, 0.01%)</title><rect x="1038.6" y="325" width="0.2" height="15.0" fill="rgb(226,204,16)" rx="2" ry="2" />
+<text  x="1041.64" y="335.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::isInLoopThread (18 samples, 0.01%)</title><rect x="792.5" y="597" width="0.2" height="15.0" fill="rgb(230,90,18)" rx="2" ry="2" />
+<text  x="795.55" y="607.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;char*, std::vector&lt;char, std::allocator&lt;char&gt; &gt; &gt;::__normal_iterator (99 samples, 0.05%)</title><rect x="107.4" y="501" width="0.6" height="15.0" fill="rgb(213,143,47)" rx="2" ry="2" />
+<text  x="110.36" y="511.5" ></text>
+</g>
+<g >
+<title>skb_release_head_state (7,859 samples, 3.97%)</title><rect x="1038.8" y="405" width="46.8" height="15.0" fill="rgb(224,174,38)" rx="2" ry="2" />
+<text  x="1041.84" y="415.5" >skb_..</text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt;::_M_head (80 samples, 0.04%)</title><rect x="635.6" y="405" width="0.5" height="15.0" fill="rgb(216,213,13)" rx="2" ry="2" />
+<text  x="638.59" y="415.5" ></text>
+</g>
+<g >
+<title>ikcp_available_sndwnd_in_bytes (369 samples, 0.19%)</title><rect x="164.8" y="453" width="2.2" height="15.0" fill="rgb(233,208,36)" rx="2" ry="2" />
+<text  x="167.80" y="463.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access (20 samples, 0.01%)</title><rect x="1107.9" y="597" width="0.1" height="15.0" fill="rgb(222,223,31)" rx="2" ry="2" />
+<text  x="1110.86" y="607.5" ></text>
+</g>
+<g >
+<title>ikcp_free (28 samples, 0.01%)</title><rect x="100.6" y="533" width="0.2" height="15.0" fill="rgb(222,56,21)" rx="2" ry="2" />
+<text  x="103.65" y="543.5" ></text>
+</g>
+<g >
+<title>muduo::Logger::logLevel (120 samples, 0.06%)</title><rect x="649.5" y="501" width="0.8" height="15.0" fill="rgb(218,119,3)" rx="2" ry="2" />
+<text  x="652.54" y="511.5" ></text>
+</g>
+<g >
+<title>malloc (143 samples, 0.07%)</title><rect x="738.7" y="533" width="0.9" height="15.0" fill="rgb(219,119,6)" rx="2" ry="2" />
+<text  x="741.70" y="543.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;KCPSession&gt;::~shared_ptr (64 samples, 0.03%)</title><rect x="766.1" y="565" width="0.3" height="15.0" fill="rgb(209,224,7)" rx="2" ry="2" />
+<text  x="769.06" y="575.5" ></text>
+</g>
+<g >
+<title>ikcp_waitsnd (151 samples, 0.08%)</title><rect x="593.3" y="437" width="0.9" height="15.0" fill="rgb(247,176,1)" rx="2" ry="2" />
+<text  x="596.27" y="447.5" ></text>
+</g>
+<g >
+<title>muduo::net::Channel::handleEventWithGuard (183,344 samples, 92.51%)</title><rect x="16.7" y="661" width="1091.6" height="15.0" fill="rgb(208,227,50)" rx="2" ry="2" />
+<text  x="19.71" y="671.5" >muduo::net::Channel::handleEventWithGuard</text>
+</g>
+<g >
+<title>memcg_kmem_get_cache (24 samples, 0.01%)</title><rect x="514.4" y="149" width="0.2" height="15.0" fill="rgb(220,227,1)" rx="2" ry="2" />
+<text  x="517.44" y="159.5" ></text>
+</g>
+<g >
+<title>malloc (869 samples, 0.44%)</title><rect x="1178.2" y="677" width="5.2" height="15.0" fill="rgb(242,117,9)" rx="2" ry="2" />
+<text  x="1181.23" y="687.5" ></text>
+</g>
+<g >
+<title>ikcp_segment_delete (293 samples, 0.15%)</title><rect x="736.2" y="533" width="1.8" height="15.0" fill="rgb(232,110,45)" rx="2" ry="2" />
+<text  x="739.23" y="543.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;KCPSession,  (22 samples, 0.01%)</title><rect x="110.5" y="549" width="0.2" height="15.0" fill="rgb(238,164,24)" rx="2" ry="2" />
+<text  x="113.54" y="559.5" ></text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::_M_ptr (190 samples, 0.10%)</title><rect x="656.7" y="533" width="1.1" height="15.0" fill="rgb(234,124,8)" rx="2" ry="2" />
+<text  x="659.70" y="543.5" ></text>
+</g>
+<g >
+<title>vfs_write (23 samples, 0.01%)</title><rect x="583.2" y="309" width="0.2" height="15.0" fill="rgb(212,228,50)" rx="2" ry="2" />
+<text  x="586.23" y="319.5" ></text>
+</g>
+<g >
+<title>malloc (83 samples, 0.04%)</title><rect x="621.2" y="405" width="0.5" height="15.0" fill="rgb(212,7,11)" rx="2" ry="2" />
+<text  x="624.18" y="415.5" ></text>
+</g>
+<g >
+<title>ikcp_parse_una (29 samples, 0.01%)</title><rect x="755.1" y="565" width="0.2" height="15.0" fill="rgb(210,145,42)" rx="2" ry="2" />
+<text  x="758.09" y="575.5" ></text>
+</g>
+<g >
+<title>skb_release_head_state (39 samples, 0.02%)</title><rect x="1086.0" y="421" width="0.2" height="15.0" fill="rgb(209,121,54)" rx="2" ry="2" />
+<text  x="1089.01" y="431.5" ></text>
+</g>
+<g >
+<title>aa_unix_msg_perm (20 samples, 0.01%)</title><rect x="330.7" y="181" width="0.1" height="15.0" fill="rgb(220,159,38)" rx="2" ry="2" />
+<text  x="333.72" y="191.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (46,423 samples, 23.42%)</title><rect x="829.0" y="581" width="276.4" height="15.0" fill="rgb(241,64,28)" rx="2" ry="2" />
+<text  x="832.00" y="591.5" >do_syscall_64</text>
+</g>
+<g >
+<title>__wake_up_common_lock (35 samples, 0.02%)</title><rect x="1053.0" y="341" width="0.2" height="15.0" fill="rgb(223,20,53)" rx="2" ry="2" />
+<text  x="1056.03" y="351.5" ></text>
+</g>
+<g >
+<title>_int_malloc (978 samples, 0.49%)</title><rect x="1113.1" y="677" width="5.9" height="15.0" fill="rgb(242,225,14)" rx="2" ry="2" />
+<text  x="1116.13" y="687.5" ></text>
+</g>
+<g >
+<title>apparmor_socket_getpeersec_dgram (21 samples, 0.01%)</title><rect x="355.0" y="181" width="0.1" height="15.0" fill="rgb(250,108,3)" rx="2" ry="2" />
+<text  x="357.98" y="191.5" ></text>
+</g>
+<g >
+<title>rcu_all_qs (24 samples, 0.01%)</title><rect x="512.1" y="133" width="0.1" height="15.0" fill="rgb(245,142,14)" rx="2" ry="2" />
+<text  x="515.06" y="143.5" ></text>
+</g>
+<g >
+<title>__raw_callee_save___pv_queued_spin_unlock (544 samples, 0.27%)</title><rect x="343.5" y="197" width="3.2" height="15.0" fill="rgb(239,103,41)" rx="2" ry="2" />
+<text  x="346.50" y="207.5" ></text>
+</g>
+<g >
+<title>memcg_kmem_charge (1,409 samples, 0.71%)</title><rect x="480.4" y="85" width="8.4" height="15.0" fill="rgb(209,118,45)" rx="2" ry="2" />
+<text  x="483.37" y="95.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::begin (355 samples, 0.18%)</title><rect x="640.8" y="453" width="2.1" height="15.0" fill="rgb(243,53,32)" rx="2" ry="2" />
+<text  x="643.79" y="463.5" ></text>
+</g>
+<g >
+<title>security_sock_rcv_skb (40 samples, 0.02%)</title><rect x="353.2" y="197" width="0.3" height="15.0" fill="rgb(234,42,8)" rx="2" ry="2" />
+<text  x="356.24" y="207.5" ></text>
+</g>
+<g >
+<title>std::__atomic_base&lt;unsigned long&gt;::operator++ (176 samples, 0.09%)</title><rect x="646.6" y="485" width="1.1" height="15.0" fill="rgb(222,221,7)" rx="2" ry="2" />
+<text  x="649.64" y="495.5" ></text>
+</g>
+<g >
+<title>unix_scm_to_skb (21 samples, 0.01%)</title><rect x="571.7" y="213" width="0.2" height="15.0" fill="rgb(213,64,46)" rx="2" ry="2" />
+<text  x="574.73" y="223.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::get (288 samples, 0.15%)</title><rect x="656.3" y="549" width="1.7" height="15.0" fill="rgb(213,111,49)" rx="2" ry="2" />
+<text  x="659.31" y="559.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (101 samples, 0.05%)</title><rect x="114.6" y="469" width="0.6" height="15.0" fill="rgb(209,157,7)" rx="2" ry="2" />
+<text  x="117.58" y="479.5" ></text>
+</g>
+<g >
+<title>__fget_light (105 samples, 0.05%)</title><rect x="860.1" y="549" width="0.6" height="15.0" fill="rgb(212,90,12)" rx="2" ry="2" />
+<text  x="863.12" y="559.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;unsigned long&gt; (65 samples, 0.03%)</title><rect x="590.7" y="389" width="0.4" height="15.0" fill="rgb(233,208,10)" rx="2" ry="2" />
+<text  x="593.70" y="399.5" ></text>
+</g>
+<g >
+<title>unix_destruct_scm (7,640 samples, 3.85%)</title><rect x="1040.1" y="389" width="45.5" height="15.0" fill="rgb(212,150,32)" rx="2" ry="2" />
+<text  x="1043.14" y="399.5" >unix..</text>
+</g>
+<g >
+<title>get_page_from_freelist (1,735 samples, 0.88%)</title><rect x="470.0" y="85" width="10.4" height="15.0" fill="rgb(249,6,44)" rx="2" ry="2" />
+<text  x="473.04" y="95.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (5,048 samples, 2.55%)</title><rect x="527.2" y="149" width="30.0" height="15.0" fill="rgb(211,59,14)" rx="2" ry="2" />
+<text  x="530.16" y="159.5" >_r..</text>
+</g>
+<g >
+<title>__check_heap_object (21 samples, 0.01%)</title><rect x="948.8" y="437" width="0.1" height="15.0" fill="rgb(220,66,17)" rx="2" ry="2" />
+<text  x="951.76" y="447.5" ></text>
+</g>
+<g >
+<title>__virt_addr_valid (42 samples, 0.02%)</title><rect x="399.7" y="181" width="0.2" height="15.0" fill="rgb(214,124,2)" rx="2" ry="2" />
+<text  x="402.67" y="191.5" ></text>
+</g>
+<g >
+<title>KCPSession::WriteInLoopThread (85,712 samples, 43.25%)</title><rect x="129.6" y="469" width="510.3" height="15.0" fill="rgb(247,200,32)" rx="2" ry="2" />
+<text  x="132.56" y="479.5" >KCPSession::WriteInLoopThread</text>
+</g>
+<g >
+<title>__check_object_size (1,945 samples, 0.98%)</title><rect x="948.9" y="437" width="11.6" height="15.0" fill="rgb(217,143,22)" rx="2" ry="2" />
+<text  x="951.88" y="447.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;void*&gt; (32 samples, 0.02%)</title><rect x="590.0" y="373" width="0.2" height="15.0" fill="rgb(246,40,2)" rx="2" ry="2" />
+<text  x="592.96" y="383.5" ></text>
+</g>
+<g >
+<title>security_file_permission (52 samples, 0.03%)</title><rect x="1104.9" y="533" width="0.3" height="15.0" fill="rgb(240,204,43)" rx="2" ry="2" />
+<text  x="1107.88" y="543.5" ></text>
+</g>
+<g >
+<title>__check_object_size (21 samples, 0.01%)</title><rect x="343.3" y="197" width="0.1" height="15.0" fill="rgb(207,60,52)" rx="2" ry="2" />
+<text  x="346.29" y="207.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::get (469 samples, 0.24%)</title><rect x="789.6" y="581" width="2.8" height="15.0" fill="rgb(233,126,43)" rx="2" ry="2" />
+<text  x="792.61" y="591.5" ></text>
+</g>
+<g >
+<title>ikcp_encode_seg (58 samples, 0.03%)</title><rect x="169.3" y="453" width="0.3" height="15.0" fill="rgb(218,217,22)" rx="2" ry="2" />
+<text  x="172.29" y="463.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;char, std::allocator&lt;char&gt; &gt;::size (118 samples, 0.06%)</title><rect x="108.6" y="517" width="0.7" height="15.0" fill="rgb(238,201,26)" rx="2" ry="2" />
+<text  x="111.60" y="527.5" ></text>
+</g>
+<g >
+<title>sock_recvmsg (33,160 samples, 16.73%)</title><rect x="889.3" y="485" width="197.4" height="15.0" fill="rgb(214,209,30)" rx="2" ry="2" />
+<text  x="892.28" y="495.5" >sock_recvmsg</text>
+</g>
+<g >
+<title>__wake_up_sync_key (49 samples, 0.02%)</title><rect x="346.7" y="197" width="0.3" height="15.0" fill="rgb(245,82,5)" rx="2" ry="2" />
+<text  x="349.74" y="207.5" ></text>
+</g>
+<g >
+<title>__vfs_read (179 samples, 0.09%)</title><rect x="861.0" y="549" width="1.0" height="15.0" fill="rgb(224,223,1)" rx="2" ry="2" />
+<text  x="863.97" y="559.5" ></text>
+</g>
+<g >
+<title>skb_release_all (12,187 samples, 6.15%)</title><rect x="1013.3" y="421" width="72.5" height="15.0" fill="rgb(229,134,31)" rx="2" ry="2" />
+<text  x="1016.27" y="431.5" >skb_rele..</text>
+</g>
+<g >
+<title>std::_Function_base::_M_empty (81 samples, 0.04%)</title><rect x="631.1" y="437" width="0.5" height="15.0" fill="rgb(254,93,34)" rx="2" ry="2" />
+<text  x="634.11" y="447.5" ></text>
+</g>
+<g >
+<title>__indirect_thunk_start (17 samples, 0.01%)</title><rect x="888.9" y="485" width="0.1" height="15.0" fill="rgb(223,194,23)" rx="2" ry="2" />
+<text  x="891.94" y="495.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::isInLoopThread (99 samples, 0.05%)</title><rect x="629.3" y="437" width="0.6" height="15.0" fill="rgb(238,186,44)" rx="2" ry="2" />
+<text  x="632.35" y="447.5" ></text>
+</g>
+<g >
+<title>ikcp_free (52 samples, 0.03%)</title><rect x="737.7" y="517" width="0.3" height="15.0" fill="rgb(211,203,47)" rx="2" ry="2" />
+<text  x="740.66" y="527.5" ></text>
+</g>
+<g >
+<title>__vfs_write (32 samples, 0.02%)</title><rect x="307.3" y="293" width="0.2" height="15.0" fill="rgb(252,181,48)" rx="2" ry="2" />
+<text  x="310.27" y="303.5" ></text>
+</g>
+<g >
+<title>__wake_up_sync_key (42 samples, 0.02%)</title><rect x="1048.6" y="357" width="0.2" height="15.0" fill="rgb(217,107,12)" rx="2" ry="2" />
+<text  x="1051.58" y="367.5" ></text>
+</g>
+<g >
+<title>KCPSession::ProcessPacket (125,666 samples, 63.41%)</title><rect x="44.2" y="597" width="748.2" height="15.0" fill="rgb(217,199,29)" rx="2" ry="2" />
+<text  x="47.20" y="607.5" >KCPSession::ProcessPacket</text>
+</g>
+<g >
+<title>put_pid (52 samples, 0.03%)</title><rect x="1039.6" y="389" width="0.3" height="15.0" fill="rgb(224,43,24)" rx="2" ry="2" />
+<text  x="1042.62" y="399.5" ></text>
+</g>
+<g >
+<title>sys_write (47,459 samples, 23.95%)</title><rect x="300.7" y="309" width="282.5" height="15.0" fill="rgb(216,35,21)" rx="2" ry="2" />
+<text  x="303.67" y="319.5" >sys_write</text>
+</g>
+<g >
+<title>sock_def_readable (24 samples, 0.01%)</title><rect x="332.0" y="213" width="0.2" height="15.0" fill="rgb(219,89,46)" rx="2" ry="2" />
+<text  x="335.04" y="223.5" ></text>
+</g>
+<g >
+<title>sock_wfree (7,413 samples, 3.74%)</title><rect x="1041.4" y="373" width="44.2" height="15.0" fill="rgb(230,212,19)" rx="2" ry="2" />
+<text  x="1044.43" y="383.5" >sock..</text>
+</g>
+<g >
+<title>__vfs_read (35,658 samples, 17.99%)</title><rect x="875.3" y="533" width="212.3" height="15.0" fill="rgb(242,182,32)" rx="2" ry="2" />
+<text  x="878.33" y="543.5" >__vfs_read</text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (58,000 samples, 29.26%)</title><rect x="244.8" y="389" width="345.4" height="15.0" fill="rgb(237,17,26)" rx="2" ry="2" />
+<text  x="247.83" y="399.5" >std::_Function_handler&lt;void </text>
+</g>
+<g >
+<title>apparmor_socket_sock_rcv_skb (28 samples, 0.01%)</title><rect x="385.6" y="181" width="0.2" height="15.0" fill="rgb(226,102,43)" rx="2" ry="2" />
+<text  x="388.60" y="191.5" ></text>
+</g>
+<g >
+<title>_cond_resched (61 samples, 0.03%)</title><rect x="502.1" y="133" width="0.4" height="15.0" fill="rgb(249,74,15)" rx="2" ry="2" />
+<text  x="505.10" y="143.5" ></text>
+</g>
+<g >
+<title>std::__get_helper&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (87 samples, 0.04%)</title><rect x="657.3" y="501" width="0.5" height="15.0" fill="rgb(210,91,35)" rx="2" ry="2" />
+<text  x="660.31" y="511.5" ></text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt;::_M_head (259 samples, 0.13%)</title><rect x="637.4" y="389" width="1.5" height="15.0" fill="rgb(228,197,53)" rx="2" ry="2" />
+<text  x="640.39" y="399.5" ></text>
+</g>
+<g >
+<title>__raw_callee_save___pv_queued_spin_unlock (23 samples, 0.01%)</title><rect x="326.1" y="213" width="0.1" height="15.0" fill="rgb(212,229,48)" rx="2" ry="2" />
+<text  x="329.08" y="223.5" ></text>
+</g>
+<g >
+<title>__pthread_mutex_unlock (269 samples, 0.14%)</title><rect x="13.4" y="661" width="1.6" height="15.0" fill="rgb(235,44,14)" rx="2" ry="2" />
+<text  x="16.35" y="671.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access&lt;SessionBenchmark::Initialize (40 samples, 0.02%)</title><rect x="651.6" y="501" width="0.2" height="15.0" fill="rgb(222,150,24)" rx="2" ry="2" />
+<text  x="654.61" y="511.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (199 samples, 0.10%)</title><rect x="526.0" y="149" width="1.2" height="15.0" fill="rgb(219,89,34)" rx="2" ry="2" />
+<text  x="528.98" y="159.5" ></text>
+</g>
+<g >
+<title>try_charge (468 samples, 0.24%)</title><rect x="485.8" y="53" width="2.8" height="15.0" fill="rgb(254,83,23)" rx="2" ry="2" />
+<text  x="488.82" y="63.5" ></text>
+</g>
+<g >
+<title>std::__addressof&lt;SessionBenchmark::Initialize (20 samples, 0.01%)</title><rect x="651.8" y="501" width="0.2" height="15.0" fill="rgb(214,146,44)" rx="2" ry="2" />
+<text  x="654.85" y="511.5" ></text>
+</g>
+<g >
+<title>sock_recvmsg (53 samples, 0.03%)</title><rect x="1086.9" y="501" width="0.3" height="15.0" fill="rgb(207,69,48)" rx="2" ry="2" />
+<text  x="1089.90" y="511.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;KCPSession,  (382 samples, 0.19%)</title><rect x="793.8" y="565" width="2.2" height="15.0" fill="rgb(248,8,26)" rx="2" ry="2" />
+<text  x="796.76" y="575.5" ></text>
+</g>
+<g >
+<title>apparmor_file_permission (63 samples, 0.03%)</title><rect x="576.6" y="261" width="0.4" height="15.0" fill="rgb(253,99,29)" rx="2" ry="2" />
+<text  x="579.58" y="271.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::ensureWritableBytes (18 samples, 0.01%)</title><rect x="761.3" y="565" width="0.1" height="15.0" fill="rgb(210,72,51)" rx="2" ry="2" />
+<text  x="764.27" y="575.5" ></text>
+</g>
+<g >
+<title>ikcp_segment_new (213 samples, 0.11%)</title><rect x="620.4" y="421" width="1.3" height="15.0" fill="rgb(231,158,16)" rx="2" ry="2" />
+<text  x="623.41" y="431.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (1,894 samples, 0.96%)</title><rect x="435.9" y="181" width="11.3" height="15.0" fill="rgb(243,201,6)" rx="2" ry="2" />
+<text  x="438.95" y="191.5" ></text>
+</g>
+<g >
+<title>__libc_read (51,387 samples, 25.93%)</title><rect x="799.8" y="613" width="305.9" height="15.0" fill="rgb(218,148,24)" rx="2" ry="2" />
+<text  x="802.80" y="623.5" >__libc_read</text>
+</g>
+<g >
+<title>common_file_perm (770 samples, 0.39%)</title><rect x="578.0" y="229" width="4.6" height="15.0" fill="rgb(250,15,36)" rx="2" ry="2" />
+<text  x="581.02" y="239.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;KCPSession,  (42 samples, 0.02%)</title><rect x="649.3" y="453" width="0.2" height="15.0" fill="rgb(248,218,9)" rx="2" ry="2" />
+<text  x="652.29" y="463.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_Base_manager&lt;SessionBenchmark::Initialize (152 samples, 0.08%)</title><rect x="1107.1" y="629" width="1.0" height="15.0" fill="rgb(212,99,8)" rx="2" ry="2" />
+<text  x="1110.15" y="639.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr_access&lt;KCPSession,  (102 samples, 0.05%)</title><rect x="648.9" y="485" width="0.6" height="15.0" fill="rgb(205,12,7)" rx="2" ry="2" />
+<text  x="651.93" y="495.5" ></text>
+</g>
+<g >
+<title>sys_read (42,966 samples, 21.68%)</title><rect x="849.4" y="565" width="255.8" height="15.0" fill="rgb(217,91,46)" rx="2" ry="2" />
+<text  x="852.38" y="575.5" >sys_read</text>
+</g>
+<g >
+<title>std::get&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (158 samples, 0.08%)</title><rect x="638.9" y="437" width="1.0" height="15.0" fill="rgb(246,1,34)" rx="2" ry="2" />
+<text  x="641.93" y="447.5" ></text>
+</g>
+<g >
+<title>ikcp_available_wnd_in_mss (27 samples, 0.01%)</title><rect x="169.1" y="453" width="0.2" height="15.0" fill="rgb(239,142,54)" rx="2" ry="2" />
+<text  x="172.13" y="463.5" ></text>
+</g>
+<g >
+<title>ikcp_update_ack (840 samples, 0.42%)</title><rect x="741.0" y="549" width="5.0" height="15.0" fill="rgb(251,227,37)" rx="2" ry="2" />
+<text  x="743.96" y="559.5" ></text>
+</g>
+<g >
+<title>common_file_perm (99 samples, 0.05%)</title><rect x="1101.8" y="501" width="0.6" height="15.0" fill="rgb(205,25,17)" rx="2" ry="2" />
+<text  x="1104.79" y="511.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (89,451 samples, 45.13%)</title><rect x="119.7" y="533" width="532.6" height="15.0" fill="rgb(235,194,50)" rx="2" ry="2" />
+<text  x="122.72" y="543.5" >std::_Function_handler&lt;void </text>
+</g>
+<g >
+<title>__virt_addr_valid (54 samples, 0.03%)</title><rect x="960.5" y="437" width="0.3" height="15.0" fill="rgb(245,227,45)" rx="2" ry="2" />
+<text  x="963.46" y="447.5" ></text>
+</g>
+<g >
+<title>sys_write (24 samples, 0.01%)</title><rect x="583.4" y="325" width="0.1" height="15.0" fill="rgb(221,101,52)" rx="2" ry="2" />
+<text  x="586.37" y="335.5" ></text>
+</g>
+<g >
+<title>iov_iter_init (51 samples, 0.03%)</title><rect x="319.4" y="245" width="0.3" height="15.0" fill="rgb(252,87,20)" rx="2" ry="2" />
+<text  x="322.37" y="255.5" ></text>
+</g>
+<g >
+<title>__kmalloc_reserve.isra.43 (30 samples, 0.02%)</title><rect x="515.1" y="165" width="0.2" height="15.0" fill="rgb(241,120,52)" rx="2" ry="2" />
+<text  x="518.10" y="175.5" ></text>
+</g>
+<g >
+<title>__wake_up_sync_key (5,431 samples, 2.74%)</title><rect x="1053.2" y="341" width="32.4" height="15.0" fill="rgb(242,135,17)" rx="2" ry="2" />
+<text  x="1056.23" y="351.5" >__..</text>
+</g>
+<g >
+<title>_raw_spin_lock (123 samples, 0.06%)</title><rect x="931.9" y="453" width="0.7" height="15.0" fill="rgb(208,98,25)" rx="2" ry="2" />
+<text  x="934.85" y="463.5" ></text>
+</g>
+<g >
+<title>__alloc_skb (10,796 samples, 5.45%)</title><rect x="450.8" y="165" width="64.3" height="15.0" fill="rgb(207,111,54)" rx="2" ry="2" />
+<text  x="453.82" y="175.5" >__alloc..</text>
+</g>
+<g >
+<title>kmalloc_large_node (3,806 samples, 1.92%)</title><rect x="466.3" y="117" width="22.7" height="15.0" fill="rgb(221,32,23)" rx="2" ry="2" />
+<text  x="469.34" y="127.5" >k..</text>
+</g>
+<g >
+<title>skb_free_head (3,844 samples, 1.94%)</title><rect x="1016.0" y="389" width="22.8" height="15.0" fill="rgb(222,90,14)" rx="2" ry="2" />
+<text  x="1018.95" y="399.5" >s..</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (46,484 samples, 23.45%)</title><rect x="829.0" y="597" width="276.7" height="15.0" fill="rgb(211,192,27)" rx="2" ry="2" />
+<text  x="831.99" y="607.5" >entry_SYSCALL_64_after_hwframe</text>
+</g>
+<g >
+<title>__fsnotify_parent (155 samples, 0.08%)</title><rect x="313.3" y="277" width="0.9" height="15.0" fill="rgb(207,117,38)" rx="2" ry="2" />
+<text  x="316.28" y="287.5" ></text>
+</g>
+<g >
+<title>common_file_perm (965 samples, 0.49%)</title><rect x="1096.0" y="485" width="5.8" height="15.0" fill="rgb(252,207,18)" rx="2" ry="2" />
+<text  x="1099.04" y="495.5" ></text>
+</g>
+<g >
+<title>page_counter_try_charge (57 samples, 0.03%)</title><rect x="488.1" y="37" width="0.3" height="15.0" fill="rgb(205,64,20)" rx="2" ry="2" />
+<text  x="491.06" y="47.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;int, std::allocator&lt;int&gt; &gt;::operator[] (308 samples, 0.16%)</title><rect x="796.0" y="597" width="1.9" height="15.0" fill="rgb(209,97,38)" rx="2" ry="2" />
+<text  x="799.04" y="607.5" ></text>
+</g>
+<g >
+<title>std::function&lt;void  (102 samples, 0.05%)</title><rect x="631.0" y="453" width="0.6" height="15.0" fill="rgb(243,87,47)" rx="2" ry="2" />
+<text  x="633.99" y="463.5" ></text>
+</g>
+<g >
+<title>__indirect_thunk_start (22 samples, 0.01%)</title><rect x="1013.6" y="405" width="0.1" height="15.0" fill="rgb(251,220,12)" rx="2" ry="2" />
+<text  x="1016.56" y="415.5" ></text>
+</g>
+<g >
+<title>ikcp_waitsnd (1,048 samples, 0.53%)</title><rect x="748.6" y="549" width="6.3" height="15.0" fill="rgb(218,126,35)" rx="2" ry="2" />
+<text  x="751.61" y="559.5" ></text>
+</g>
+<g >
+<title>fsnotify (34 samples, 0.02%)</title><rect x="862.0" y="549" width="0.2" height="15.0" fill="rgb(241,35,23)" rx="2" ry="2" />
+<text  x="865.05" y="559.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::isInLoopThread (136 samples, 0.07%)</title><rect x="762.1" y="549" width="0.8" height="15.0" fill="rgb(228,114,0)" rx="2" ry="2" />
+<text  x="765.06" y="559.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::shared_ptr&lt;KCPSession&gt;, std::allocator&lt;std::shared_ptr&lt;KCPSession&gt; &gt; &gt;::size (29 samples, 0.01%)</title><rect x="584.2" y="357" width="0.2" height="15.0" fill="rgb(208,11,36)" rx="2" ry="2" />
+<text  x="587.22" y="367.5" ></text>
+</g>
+<g >
+<title>security_socket_getpeersec_dgram (58 samples, 0.03%)</title><rect x="327.2" y="213" width="0.4" height="15.0" fill="rgb(210,179,17)" rx="2" ry="2" />
+<text  x="330.24" y="223.5" ></text>
+</g>
+<g >
+<title>aa_file_perm (201 samples, 0.10%)</title><rect x="1100.6" y="469" width="1.2" height="15.0" fill="rgb(215,217,13)" rx="2" ry="2" />
+<text  x="1103.59" y="479.5" ></text>
+</g>
+<g >
+<title>__alloc_skb (24 samples, 0.01%)</title><rect x="449.0" y="181" width="0.2" height="15.0" fill="rgb(238,74,26)" rx="2" ry="2" />
+<text  x="452.05" y="191.5" ></text>
+</g>
+<g >
+<title>vfs_read (40,714 samples, 20.54%)</title><rect x="862.8" y="549" width="242.4" height="15.0" fill="rgb(214,153,19)" rx="2" ry="2" />
+<text  x="865.79" y="559.5" >vfs_read</text>
+</g>
+<g >
+<title>copy_user_generic_unrolled (655 samples, 0.33%)</title><rect x="999.1" y="421" width="3.9" height="15.0" fill="rgb(233,62,53)" rx="2" ry="2" />
+<text  x="1002.08" y="431.5" ></text>
+</g>
+<g >
+<title>ktime_get_ts64 (577 samples, 0.29%)</title><rect x="1173.9" y="581" width="3.5" height="15.0" fill="rgb(234,188,54)" rx="2" ry="2" />
+<text  x="1176.92" y="591.5" ></text>
+</g>
+<g >
+<title>sock_write_iter (38 samples, 0.02%)</title><rect x="572.3" y="261" width="0.3" height="15.0" fill="rgb(215,53,30)" rx="2" ry="2" />
+<text  x="575.33" y="271.5" ></text>
+</g>
+<g >
+<title>__fsnotify_parent (21 samples, 0.01%)</title><rect x="307.1" y="293" width="0.2" height="15.0" fill="rgb(223,152,48)" rx="2" ry="2" />
+<text  x="310.14" y="303.5" ></text>
+</g>
+<g >
+<title>__gthread_active_p (18 samples, 0.01%)</title><rect x="656.2" y="485" width="0.1" height="15.0" fill="rgb(248,28,7)" rx="2" ry="2" />
+<text  x="659.20" y="495.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;muduo::net::InetAddress const&amp;&gt; (87 samples, 0.04%)</title><rect x="588.9" y="373" width="0.5" height="15.0" fill="rgb(250,211,19)" rx="2" ry="2" />
+<text  x="591.91" y="383.5" ></text>
+</g>
+<g >
+<title>copy_user_generic_unrolled (521 samples, 0.26%)</title><rect x="429.7" y="165" width="3.1" height="15.0" fill="rgb(250,39,1)" rx="2" ry="2" />
+<text  x="432.70" y="175.5" ></text>
+</g>
+<g >
+<title>security_socket_getpeersec_dgram (274 samples, 0.14%)</title><rect x="353.5" y="197" width="1.6" height="15.0" fill="rgb(228,69,8)" rx="2" ry="2" />
+<text  x="356.48" y="207.5" ></text>
+</g>
+<g >
+<title>skb_queue_tail (2,063 samples, 1.04%)</title><rect x="434.9" y="197" width="12.3" height="15.0" fill="rgb(236,180,14)" rx="2" ry="2" />
+<text  x="437.94" y="207.5" ></text>
+</g>
+<g >
+<title>copyin (53 samples, 0.03%)</title><rect x="434.2" y="181" width="0.4" height="15.0" fill="rgb(245,36,21)" rx="2" ry="2" />
+<text  x="437.25" y="191.5" ></text>
+</g>
+<g >
+<title>KCPSession::IsClosed (157 samples, 0.08%)</title><rect x="48.9" y="581" width="0.9" height="15.0" fill="rgb(221,95,10)" rx="2" ry="2" />
+<text  x="51.89" y="591.5" ></text>
+</g>
+<g >
+<title>std::_Head_base&lt;0ul, IKCPCB*, false&gt;::_M_head (109 samples, 0.05%)</title><rect x="779.4" y="501" width="0.7" height="15.0" fill="rgb(221,203,52)" rx="2" ry="2" />
+<text  x="782.42" y="511.5" ></text>
+</g>
+<g >
+<title>__fdget_pos (638 samples, 0.32%)</title><rect x="302.7" y="293" width="3.8" height="15.0" fill="rgb(216,228,39)" rx="2" ry="2" />
+<text  x="305.67" y="303.5" ></text>
+</g>
+<g >
+<title>set_normalized_timespec64 (27 samples, 0.01%)</title><rect x="1177.4" y="581" width="0.2" height="15.0" fill="rgb(254,214,48)" rx="2" ry="2" />
+<text  x="1180.40" y="591.5" ></text>
+</g>
+<g >
+<title>check_stack_object (52 samples, 0.03%)</title><rect x="433.9" y="181" width="0.3" height="15.0" fill="rgb(219,152,35)" rx="2" ry="2" />
+<text  x="436.94" y="191.5" ></text>
+</g>
+<g >
+<title>KCPReceivedPacket::KCPReceivedPacket (79 samples, 0.04%)</title><rect x="24.1" y="613" width="0.5" height="15.0" fill="rgb(205,186,5)" rx="2" ry="2" />
+<text  x="27.15" y="623.5" ></text>
+</g>
+<g >
+<title>apparmor_unix_may_send (49 samples, 0.02%)</title><rect x="352.9" y="197" width="0.3" height="15.0" fill="rgb(220,109,42)" rx="2" ry="2" />
+<text  x="355.95" y="207.5" ></text>
+</g>
+<g >
+<title>_cond_resched (32 samples, 0.02%)</title><rect x="466.0" y="117" width="0.2" height="15.0" fill="rgb(254,223,0)" rx="2" ry="2" />
+<text  x="469.00" y="127.5" ></text>
+</g>
+<g >
+<title>__check_heap_object (674 samples, 0.34%)</title><rect x="951.4" y="421" width="4.0" height="15.0" fill="rgb(233,5,5)" rx="2" ry="2" />
+<text  x="954.42" y="431.5" ></text>
+</g>
+<g >
+<title>fsnotify (421 samples, 0.21%)</title><rect x="1102.4" y="501" width="2.5" height="15.0" fill="rgb(210,35,51)" rx="2" ry="2" />
+<text  x="1105.38" y="511.5" ></text>
+</g>
+<g >
+<title>kmem_cache_free (33 samples, 0.02%)</title><rect x="1013.1" y="421" width="0.2" height="15.0" fill="rgb(239,198,9)" rx="2" ry="2" />
+<text  x="1016.08" y="431.5" ></text>
+</g>
+<g >
+<title>new_sync_write (43,173 samples, 21.78%)</title><rect x="315.3" y="261" width="257.0" height="15.0" fill="rgb(219,177,8)" rx="2" ry="2" />
+<text  x="318.29" y="271.5" >new_sync_write</text>
+</g>
+<g >
+<title>std::vector&lt;std::shared_ptr&lt;KCPSession&gt;, std::allocator&lt;std::shared_ptr&lt;KCPSession&gt; &gt; &gt;::size (262 samples, 0.13%)</title><rect x="265.8" y="341" width="1.5" height="15.0" fill="rgb(235,105,28)" rx="2" ry="2" />
+<text  x="268.76" y="351.5" ></text>
+</g>
+<g >
+<title>refill_stock (35 samples, 0.02%)</title><rect x="488.4" y="37" width="0.2" height="15.0" fill="rgb(232,19,8)" rx="2" ry="2" />
+<text  x="491.40" y="47.5" ></text>
+</g>
+<g >
+<title>ikcp_segment_delete (27 samples, 0.01%)</title><rect x="738.0" y="549" width="0.1" height="15.0" fill="rgb(230,7,32)" rx="2" ry="2" />
+<text  x="740.97" y="559.5" ></text>
+</g>
+<g >
+<title>kfree (3,818 samples, 1.93%)</title><rect x="1016.1" y="373" width="22.7" height="15.0" fill="rgb(231,165,14)" rx="2" ry="2" />
+<text  x="1019.11" y="383.5" >k..</text>
+</g>
+<g >
+<title>__virt_addr_valid (812 samples, 0.41%)</title><rect x="394.6" y="165" width="4.9" height="15.0" fill="rgb(239,25,25)" rx="2" ry="2" />
+<text  x="397.62" y="175.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;char const*, std::vector&lt;char, std::allocator&lt;char&gt; &gt; &gt;::operator* (57 samples, 0.03%)</title><rect x="641.1" y="437" width="0.4" height="15.0" fill="rgb(241,173,22)" rx="2" ry="2" />
+<text  x="644.13" y="447.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (49,876 samples, 25.17%)</title><rect x="286.4" y="325" width="297.0" height="15.0" fill="rgb(235,66,15)" rx="2" ry="2" />
+<text  x="289.41" y="335.5" >do_syscall_64</text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (180 samples, 0.09%)</title><rect x="932.8" y="453" width="1.1" height="15.0" fill="rgb(243,125,46)" rx="2" ry="2" />
+<text  x="935.79" y="463.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access (102 samples, 0.05%)</title><rect x="587.5" y="341" width="0.6" height="15.0" fill="rgb(206,132,19)" rx="2" ry="2" />
+<text  x="590.47" y="351.5" ></text>
+</g>
+<g >
+<title>aa_unix_msg_perm (35 samples, 0.02%)</title><rect x="897.4" y="437" width="0.2" height="15.0" fill="rgb(228,7,18)" rx="2" ry="2" />
+<text  x="900.36" y="447.5" ></text>
+</g>
+<g >
+<title>__raw_callee_save___pv_queued_spin_unlock (573 samples, 0.29%)</title><rect x="561.0" y="181" width="3.4" height="15.0" fill="rgb(242,195,36)" rx="2" ry="2" />
+<text  x="564.01" y="191.5" ></text>
+</g>
+<g >
+<title>new_sync_read (40 samples, 0.02%)</title><rect x="1089.9" y="533" width="0.2" height="15.0" fill="rgb(207,58,12)" rx="2" ry="2" />
+<text  x="1092.87" y="543.5" ></text>
+</g>
+<g >
+<title>sock_alloc_send_pskb (19 samples, 0.01%)</title><rect x="331.9" y="213" width="0.1" height="15.0" fill="rgb(218,54,11)" rx="2" ry="2" />
+<text  x="334.93" y="223.5" ></text>
+</g>
+<g >
+<title>skb_set_owner_w (868 samples, 0.44%)</title><rect x="515.6" y="181" width="5.1" height="15.0" fill="rgb(245,118,16)" rx="2" ry="2" />
+<text  x="518.58" y="191.5" ></text>
+</g>
+<g >
+<title>muduo::net::EventLoop::isInLoopThread (92 samples, 0.05%)</title><rect x="644.1" y="469" width="0.5" height="15.0" fill="rgb(211,2,5)" rx="2" ry="2" />
+<text  x="647.06" y="479.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;KCPSession,  (624 samples, 0.31%)</title><rect x="111.5" y="517" width="3.7" height="15.0" fill="rgb(232,41,25)" rx="2" ry="2" />
+<text  x="114.47" y="527.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (3,874 samples, 1.95%)</title><rect x="658.0" y="565" width="23.1" height="15.0" fill="rgb(212,189,48)" rx="2" ry="2" />
+<text  x="661.03" y="575.5" >_..</text>
+</g>
+<g >
+<title>__check_object_size (1,718 samples, 0.87%)</title><rect x="389.4" y="181" width="10.3" height="15.0" fill="rgb(228,101,46)" rx="2" ry="2" />
+<text  x="392.44" y="191.5" ></text>
+</g>
+<g >
+<title>ep_scan_ready_list.constprop.17 (3,554 samples, 1.79%)</title><rect x="1142.5" y="597" width="21.2" height="15.0" fill="rgb(238,212,14)" rx="2" ry="2" />
+<text  x="1145.50" y="607.5" ></text>
+</g>
+<g >
+<title>security_sock_rcv_skb (325 samples, 0.16%)</title><rect x="385.8" y="181" width="1.9" height="15.0" fill="rgb(238,46,48)" rx="2" ry="2" />
+<text  x="388.76" y="191.5" ></text>
+</g>
+<g >
+<title>ikcp_wnd_unused (49 samples, 0.02%)</title><rect x="592.5" y="437" width="0.3" height="15.0" fill="rgb(251,133,19)" rx="2" ry="2" />
+<text  x="595.47" y="447.5" ></text>
+</g>
+<g >
+<title>__vdso_gettimeofday (1,088 samples, 0.55%)</title><rect x="622.6" y="437" width="6.5" height="15.0" fill="rgb(236,130,13)" rx="2" ry="2" />
+<text  x="625.64" y="447.5" ></text>
+</g>
+<g >
+<title>std::_Head_base&lt;0ul, IKCPCB*, false&gt;::_M_head (124 samples, 0.06%)</title><rect x="638.2" y="373" width="0.7" height="15.0" fill="rgb(222,155,28)" rx="2" ry="2" />
+<text  x="641.19" y="383.5" ></text>
+</g>
+<g >
+<title>ksize (375 samples, 0.19%)</title><rect x="512.2" y="149" width="2.2" height="15.0" fill="rgb(216,122,50)" rx="2" ry="2" />
+<text  x="515.20" y="159.5" ></text>
+</g>
+<g >
+<title>rcu_all_qs (29 samples, 0.01%)</title><rect x="492.4" y="117" width="0.2" height="15.0" fill="rgb(251,24,3)" rx="2" ry="2" />
+<text  x="495.42" y="127.5" ></text>
+</g>
+<g >
+<title>muduo::Logger::logLevel (244 samples, 0.12%)</title><rect x="263.1" y="341" width="1.5" height="15.0" fill="rgb(218,64,32)" rx="2" ry="2" />
+<text  x="266.13" y="351.5" ></text>
+</g>
+<g >
+<title>__wake_up_common_lock (5,562 samples, 2.81%)</title><rect x="524.1" y="165" width="33.1" height="15.0" fill="rgb(251,188,38)" rx="2" ry="2" />
+<text  x="527.11" y="175.5" >__..</text>
+</g>
+<g >
+<title>std::forward&lt;void*&gt; (57 samples, 0.03%)</title><rect x="591.1" y="389" width="0.3" height="15.0" fill="rgb(214,223,40)" rx="2" ry="2" />
+<text  x="594.09" y="399.5" ></text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::_M_ptr (1,005 samples, 0.51%)</title><rect x="632.9" y="437" width="6.0" height="15.0" fill="rgb(236,171,10)" rx="2" ry="2" />
+<text  x="635.95" y="447.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access (19 samples, 0.01%)</title><rect x="651.7" y="485" width="0.1" height="15.0" fill="rgb(220,181,26)" rx="2" ry="2" />
+<text  x="654.73" y="495.5" ></text>
+</g>
+<g >
+<title>aa_sock_msg_perm (39 samples, 0.02%)</title><rect x="329.7" y="197" width="0.3" height="15.0" fill="rgb(236,166,38)" rx="2" ry="2" />
+<text  x="332.74" y="207.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_M_empty (195 samples, 0.10%)</title><rect x="118.6" y="533" width="1.1" height="15.0" fill="rgb(241,35,30)" rx="2" ry="2" />
+<text  x="121.56" y="543.5" ></text>
+</g>
+<g >
+<title>std::function&lt;void  (90,223 samples, 45.52%)</title><rect x="115.3" y="549" width="537.2" height="15.0" fill="rgb(241,47,40)" rx="2" ry="2" />
+<text  x="118.33" y="559.5" >std::function&lt;void </text>
+</g>
+<g >
+<title>muduo::net::EventLoop::assertInLoopThread (239 samples, 0.12%)</title><rect x="761.4" y="565" width="1.5" height="15.0" fill="rgb(222,177,48)" rx="2" ry="2" />
+<text  x="764.44" y="575.5" ></text>
+</g>
+<g >
+<title>ktime_get_ts64 (1,218 samples, 0.61%)</title><rect x="1163.9" y="597" width="7.2" height="15.0" fill="rgb(240,91,40)" rx="2" ry="2" />
+<text  x="1166.89" y="607.5" ></text>
+</g>
+<g >
+<title>ikcp_canlog (55 samples, 0.03%)</title><rect x="681.3" y="565" width="0.3" height="15.0" fill="rgb(219,9,35)" rx="2" ry="2" />
+<text  x="684.27" y="575.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::get (195 samples, 0.10%)</title><rect x="644.6" y="469" width="1.2" height="15.0" fill="rgb(209,59,46)" rx="2" ry="2" />
+<text  x="647.65" y="479.5" ></text>
+</g>
+<g >
+<title>KCPReceivedPacket::RemainingData (60 samples, 0.03%)</title><rect x="57.9" y="565" width="0.3" height="15.0" fill="rgb(237,44,25)" rx="2" ry="2" />
+<text  x="60.87" y="575.5" ></text>
+</g>
+<g >
+<title>ikcp_available_wnd_in_mss (264 samples, 0.13%)</title><rect x="167.5" y="437" width="1.6" height="15.0" fill="rgb(221,175,50)" rx="2" ry="2" />
+<text  x="170.48" y="447.5" ></text>
+</g>
+<g >
+<title>skb_free_datagram (29 samples, 0.01%)</title><rect x="897.8" y="469" width="0.2" height="15.0" fill="rgb(233,89,47)" rx="2" ry="2" />
+<text  x="900.80" y="479.5" ></text>
+</g>
+<g >
+<title>ikcp_need_drain (115 samples, 0.06%)</title><rect x="785.9" y="581" width="0.7" height="15.0" fill="rgb(234,56,6)" rx="2" ry="2" />
+<text  x="788.88" y="591.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (2,958 samples, 1.49%)</title><rect x="913.9" y="437" width="17.6" height="15.0" fill="rgb(224,69,41)" rx="2" ry="2" />
+<text  x="916.88" y="447.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (160 samples, 0.08%)</title><rect x="1143.3" y="581" width="1.0" height="15.0" fill="rgb(232,4,52)" rx="2" ry="2" />
+<text  x="1146.34" y="591.5" ></text>
+</g>
+<g >
+<title>rw_verify_area (1,273 samples, 0.64%)</title><rect x="575.4" y="277" width="7.6" height="15.0" fill="rgb(247,127,6)" rx="2" ry="2" />
+<text  x="578.43" y="287.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::peek (429 samples, 0.22%)</title><rect x="640.5" y="469" width="2.5" height="15.0" fill="rgb(205,200,20)" rx="2" ry="2" />
+<text  x="643.46" y="479.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access&lt;SessionBenchmark::Initialize (26 samples, 0.01%)</title><rect x="1107.0" y="629" width="0.1" height="15.0" fill="rgb(240,210,49)" rx="2" ry="2" />
+<text  x="1109.99" y="639.5" ></text>
+</g>
+<g >
+<title>ikcp_canlog (506 samples, 0.26%)</title><rect x="716.4" y="549" width="3.0" height="15.0" fill="rgb(222,40,24)" rx="2" ry="2" />
+<text  x="719.42" y="559.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::Initialize (55,722 samples, 28.12%)</title><rect x="252.7" y="373" width="331.8" height="15.0" fill="rgb(217,166,17)" rx="2" ry="2" />
+<text  x="255.75" y="383.5" >SessionBenchmark::Initialize</text>
+</g>
+<g >
+<title>KCPSession::ProcessPacket (83 samples, 0.04%)</title><rect x="25.1" y="613" width="0.5" height="15.0" fill="rgb(240,199,43)" rx="2" ry="2" />
+<text  x="28.08" y="623.5" ></text>
+</g>
+<g >
+<title>get_mem_cgroup_from_mm (24 samples, 0.01%)</title><rect x="502.5" y="133" width="0.1" height="15.0" fill="rgb(218,194,9)" rx="2" ry="2" />
+<text  x="505.46" y="143.5" ></text>
+</g>
+<g >
+<title>unix_peer_get (32 samples, 0.02%)</title><rect x="571.5" y="213" width="0.2" height="15.0" fill="rgb(205,164,20)" rx="2" ry="2" />
+<text  x="574.54" y="223.5" ></text>
+</g>
+<g >
+<title>aa_unix_msg_perm (23 samples, 0.01%)</title><rect x="330.6" y="165" width="0.1" height="15.0" fill="rgb(249,54,19)" rx="2" ry="2" />
+<text  x="333.58" y="175.5" ></text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (1,207 samples, 0.61%)</title><rect x="1119.0" y="677" width="7.1" height="15.0" fill="rgb(208,225,21)" rx="2" ry="2" />
+<text  x="1121.95" y="687.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_M_empty (174 samples, 0.09%)</title><rect x="243.8" y="389" width="1.0" height="15.0" fill="rgb(212,40,44)" rx="2" ry="2" />
+<text  x="246.79" y="399.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::SendData (42 samples, 0.02%)</title><rect x="584.5" y="373" width="0.3" height="15.0" fill="rgb(252,58,46)" rx="2" ry="2" />
+<text  x="587.51" y="383.5" ></text>
+</g>
+<g >
+<title>page_counter_try_charge (500 samples, 0.25%)</title><rect x="482.8" y="53" width="3.0" height="15.0" fill="rgb(246,124,34)" rx="2" ry="2" />
+<text  x="485.84" y="63.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::shared_ptr&lt;KCPSession&gt;, std::allocator&lt;std::shared_ptr&lt;KCPSession&gt; &gt; &gt;::operator[] (18 samples, 0.01%)</title><rect x="1106.8" y="613" width="0.1" height="15.0" fill="rgb(213,216,38)" rx="2" ry="2" />
+<text  x="1109.81" y="623.5" ></text>
+</g>
+<g >
+<title>security_socket_sendmsg (547 samples, 0.28%)</title><rect x="327.6" y="213" width="3.2" height="15.0" fill="rgb(231,77,44)" rx="2" ry="2" />
+<text  x="330.58" y="223.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (4,704 samples, 2.37%)</title><rect x="1056.9" y="309" width="28.0" height="15.0" fill="rgb(206,121,12)" rx="2" ry="2" />
+<text  x="1059.86" y="319.5" >_..</text>
+</g>
+<g >
+<title>__indirect_thunk_start (24 samples, 0.01%)</title><rect x="876.3" y="517" width="0.1" height="15.0" fill="rgb(213,107,13)" rx="2" ry="2" />
+<text  x="879.26" y="527.5" ></text>
+</g>
+<g >
+<title>memcg_kmem_get_cache (479 samples, 0.24%)</title><rect x="489.4" y="117" width="2.9" height="15.0" fill="rgb(243,161,46)" rx="2" ry="2" />
+<text  x="492.43" y="127.5" ></text>
+</g>
+<g >
+<title>[unknown] (82 samples, 0.04%)</title><rect x="10.0" y="661" width="0.5" height="15.0" fill="rgb(254,219,2)" rx="2" ry="2" />
+<text  x="13.00" y="671.5" ></text>
+</g>
+<g >
+<title>ikcp_write (20 samples, 0.01%)</title><rect x="621.9" y="453" width="0.1" height="15.0" fill="rgb(242,23,32)" rx="2" ry="2" />
+<text  x="624.87" y="463.5" ></text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::_M_ptr (154 samples, 0.08%)</title><rect x="630.0" y="453" width="0.9" height="15.0" fill="rgb(207,8,23)" rx="2" ry="2" />
+<text  x="632.98" y="463.5" ></text>
+</g>
+<g >
+<title>ep_send_events_proc (1,604 samples, 0.81%)</title><rect x="1151.9" y="581" width="9.5" height="15.0" fill="rgb(218,165,49)" rx="2" ry="2" />
+<text  x="1154.85" y="591.5" ></text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::_M_ptr (355 samples, 0.18%)</title><rect x="763.0" y="565" width="2.1" height="15.0" fill="rgb(241,186,22)" rx="2" ry="2" />
+<text  x="765.99" y="575.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::readableBytes (34 samples, 0.02%)</title><rect x="643.0" y="469" width="0.2" height="15.0" fill="rgb(208,171,7)" rx="2" ry="2" />
+<text  x="646.01" y="479.5" ></text>
+</g>
+<g >
+<title>kmalloc_large_node (122 samples, 0.06%)</title><rect x="492.7" y="133" width="0.8" height="15.0" fill="rgb(216,208,22)" rx="2" ry="2" />
+<text  x="495.72" y="143.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::beginWrite (355 samples, 0.18%)</title><rect x="105.9" y="549" width="2.1" height="15.0" fill="rgb(235,157,43)" rx="2" ry="2" />
+<text  x="108.87" y="559.5" ></text>
+</g>
+<g >
+<title>unix_write_space (6,171 samples, 3.11%)</title><rect x="1048.8" y="357" width="36.8" height="15.0" fill="rgb(209,151,46)" rx="2" ry="2" />
+<text  x="1051.83" y="367.5" >uni..</text>
+</g>
+<g >
+<title>wait_for_unix_gc (37 samples, 0.02%)</title><rect x="571.9" y="213" width="0.2" height="15.0" fill="rgb(216,4,8)" rx="2" ry="2" />
+<text  x="574.86" y="223.5" ></text>
+</g>
+<g >
+<title>KCPReceivedPacket::KCPReceivedPacket (759 samples, 0.38%)</title><rect x="38.1" y="597" width="4.6" height="15.0" fill="rgb(219,139,2)" rx="2" ry="2" />
+<text  x="41.14" y="607.5" ></text>
+</g>
+<g >
+<title>KCPReceivedPacket::RemainingData (24 samples, 0.01%)</title><rect x="48.7" y="581" width="0.2" height="15.0" fill="rgb(208,65,47)" rx="2" ry="2" />
+<text  x="51.75" y="591.5" ></text>
+</g>
+<g >
+<title>__fget_light (236 samples, 0.12%)</title><rect x="1135.6" y="597" width="1.4" height="15.0" fill="rgb(237,1,16)" rx="2" ry="2" />
+<text  x="1138.59" y="607.5" ></text>
+</g>
+<g >
+<title>KCPSession::IsClosed (1,349 samples, 0.68%)</title><rect x="58.2" y="565" width="8.1" height="15.0" fill="rgb(254,18,49)" rx="2" ry="2" />
+<text  x="61.23" y="575.5" ></text>
+</g>
+<g >
+<title>ikcp_canlog (35 samples, 0.02%)</title><rect x="200.3" y="437" width="0.2" height="15.0" fill="rgb(231,50,52)" rx="2" ry="2" />
+<text  x="203.32" y="447.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;KCPSession,  (560 samples, 0.28%)</title><rect x="653.0" y="533" width="3.3" height="15.0" fill="rgb(223,228,10)" rx="2" ry="2" />
+<text  x="655.98" y="543.5" ></text>
+</g>
+<g >
+<title>ksize (18 samples, 0.01%)</title><rect x="515.5" y="165" width="0.1" height="15.0" fill="rgb(226,102,0)" rx="2" ry="2" />
+<text  x="518.47" y="175.5" ></text>
+</g>
+<g >
+<title>put_pid (19 samples, 0.01%)</title><rect x="327.1" y="213" width="0.1" height="15.0" fill="rgb(232,103,1)" rx="2" ry="2" />
+<text  x="330.12" y="223.5" ></text>
+</g>
+<g >
+<title>mutex_unlock (79 samples, 0.04%)</title><rect x="891.6" y="469" width="0.5" height="15.0" fill="rgb(238,48,11)" rx="2" ry="2" />
+<text  x="894.63" y="479.5" ></text>
+</g>
+<g >
+<title>_copy_from_iter (26 samples, 0.01%)</title><rect x="347.2" y="197" width="0.1" height="15.0" fill="rgb(243,71,14)" rx="2" ry="2" />
+<text  x="350.17" y="207.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;unsigned long&gt; (27 samples, 0.01%)</title><rect x="589.8" y="373" width="0.2" height="15.0" fill="rgb(223,90,41)" rx="2" ry="2" />
+<text  x="592.80" y="383.5" ></text>
+</g>
+<g >
+<title>unix_dgram_recvmsg (31,700 samples, 15.99%)</title><rect x="898.0" y="469" width="188.7" height="15.0" fill="rgb(217,12,36)" rx="2" ry="2" />
+<text  x="900.98" y="479.5" >unix_dgram_recvmsg</text>
+</g>
+<g >
+<title>vfs_read (34 samples, 0.02%)</title><rect x="1105.2" y="565" width="0.2" height="15.0" fill="rgb(205,87,47)" rx="2" ry="2" />
+<text  x="1108.19" y="575.5" ></text>
+</g>
+<g >
+<title>std::operator&amp; (66 samples, 0.03%)</title><rect x="65.9" y="549" width="0.4" height="15.0" fill="rgb(243,47,32)" rx="2" ry="2" />
+<text  x="68.86" y="559.5" ></text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (163 samples, 0.08%)</title><rect x="736.7" y="517" width="1.0" height="15.0" fill="rgb(213,69,41)" rx="2" ry="2" />
+<text  x="739.68" y="527.5" ></text>
+</g>
+<g >
+<title>ikcp_segment_delete (373 samples, 0.19%)</title><rect x="103.3" y="533" width="2.2" height="15.0" fill="rgb(205,209,46)" rx="2" ry="2" />
+<text  x="106.28" y="543.5" ></text>
+</g>
+<g >
+<title>_cond_resched (17 samples, 0.01%)</title><rect x="469.9" y="85" width="0.1" height="15.0" fill="rgb(252,56,18)" rx="2" ry="2" />
+<text  x="472.89" y="95.5" ></text>
+</g>
+<g >
+<title>kvm_clock_get_cycles (441 samples, 0.22%)</title><rect x="1174.7" y="565" width="2.6" height="15.0" fill="rgb(230,110,46)" rx="2" ry="2" />
+<text  x="1177.70" y="575.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::writableBytes (167 samples, 0.08%)</title><rect x="108.3" y="533" width="1.0" height="15.0" fill="rgb(207,60,8)" rx="2" ry="2" />
+<text  x="111.30" y="543.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;char, std::allocator&lt;char&gt; &gt;::begin (18 samples, 0.01%)</title><rect x="642.9" y="453" width="0.1" height="15.0" fill="rgb(227,220,13)" rx="2" ry="2" />
+<text  x="645.90" y="463.5" ></text>
+</g>
+<g >
+<title>apparmor_socket_sendmsg (145 samples, 0.07%)</title><rect x="330.0" y="197" width="0.8" height="15.0" fill="rgb(243,184,43)" rx="2" ry="2" />
+<text  x="332.98" y="207.5" ></text>
+</g>
+<g >
+<title>kmem_cache_alloc_node (3,067 samples, 1.55%)</title><rect x="493.9" y="149" width="18.3" height="15.0" fill="rgb(229,69,28)" rx="2" ry="2" />
+<text  x="496.94" y="159.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (26 samples, 0.01%)</title><rect x="557.2" y="165" width="0.2" height="15.0" fill="rgb(236,74,6)" rx="2" ry="2" />
+<text  x="560.22" y="175.5" ></text>
+</g>
+<g >
+<title>kvm_clock_get_cycles (1,028 samples, 0.52%)</title><rect x="1164.9" y="581" width="6.2" height="15.0" fill="rgb(217,89,42)" rx="2" ry="2" />
+<text  x="1167.95" y="591.5" ></text>
+</g>
+<g >
+<title>iov_iter_init (33 samples, 0.02%)</title><rect x="315.1" y="261" width="0.2" height="15.0" fill="rgb(240,197,20)" rx="2" ry="2" />
+<text  x="318.09" y="271.5" ></text>
+</g>
+<g >
+<title>aa_sock_msg_perm (176 samples, 0.09%)</title><rect x="896.3" y="437" width="1.1" height="15.0" fill="rgb(233,30,30)" rx="2" ry="2" />
+<text  x="899.31" y="447.5" ></text>
+</g>
+<g >
+<title>apparmor_unix_may_send (4,238 samples, 2.14%)</title><rect x="356.3" y="181" width="25.2" height="15.0" fill="rgb(244,216,3)" rx="2" ry="2" />
+<text  x="359.32" y="191.5" >a..</text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (2,269 samples, 1.14%)</title><rect x="597.4" y="437" width="13.5" height="15.0" fill="rgb(247,121,43)" rx="2" ry="2" />
+<text  x="600.40" y="447.5" ></text>
+</g>
+<g >
+<title>std::__get_helper&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (238 samples, 0.12%)</title><rect x="772.6" y="533" width="1.5" height="15.0" fill="rgb(250,179,24)" rx="2" ry="2" />
+<text  x="775.64" y="543.5" ></text>
+</g>
+<g >
+<title>skb_put (58 samples, 0.03%)</title><rect x="331.4" y="213" width="0.3" height="15.0" fill="rgb(254,206,44)" rx="2" ry="2" />
+<text  x="334.37" y="223.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock (716 samples, 0.36%)</title><rect x="347.3" y="197" width="4.3" height="15.0" fill="rgb(229,6,37)" rx="2" ry="2" />
+<text  x="350.33" y="207.5" ></text>
+</g>
+<g >
+<title>rw_verify_area (2,482 samples, 1.25%)</title><rect x="1090.1" y="533" width="14.8" height="15.0" fill="rgb(219,129,38)" rx="2" ry="2" />
+<text  x="1093.11" y="543.5" ></text>
+</g>
+<g >
+<title>__fsnotify_parent (219 samples, 0.11%)</title><rect x="1094.4" y="501" width="1.4" height="15.0" fill="rgb(220,70,52)" rx="2" ry="2" />
+<text  x="1097.45" y="511.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (132 samples, 0.07%)</title><rect x="557.4" y="165" width="0.8" height="15.0" fill="rgb(247,46,13)" rx="2" ry="2" />
+<text  x="560.38" y="175.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock (60 samples, 0.03%)</title><rect x="890.6" y="469" width="0.3" height="15.0" fill="rgb(227,155,38)" rx="2" ry="2" />
+<text  x="893.58" y="479.5" ></text>
+</g>
+<g >
+<title>aa_unix_peer_perm (3,315 samples, 1.67%)</title><rect x="361.8" y="165" width="19.7" height="15.0" fill="rgb(230,83,52)" rx="2" ry="2" />
+<text  x="364.81" y="175.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::size (35 samples, 0.02%)</title><rect x="1105.9" y="613" width="0.2" height="15.0" fill="rgb(212,219,31)" rx="2" ry="2" />
+<text  x="1108.92" y="623.5" ></text>
+</g>
+<g >
+<title>memcg_kmem_get_cache (1,561 samples, 0.79%)</title><rect x="502.6" y="133" width="9.3" height="15.0" fill="rgb(225,14,3)" rx="2" ry="2" />
+<text  x="505.61" y="143.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::writableBytes (56 samples, 0.03%)</title><rect x="109.6" y="533" width="0.3" height="15.0" fill="rgb(248,178,36)" rx="2" ry="2" />
+<text  x="112.61" y="543.5" ></text>
+</g>
+<g >
+<title>__fget_light (564 samples, 0.28%)</title><rect x="303.1" y="277" width="3.4" height="15.0" fill="rgb(245,25,5)" rx="2" ry="2" />
+<text  x="306.11" y="287.5" ></text>
+</g>
+<g >
+<title>memcg_kmem_put_cache (23 samples, 0.01%)</title><rect x="492.3" y="117" width="0.1" height="15.0" fill="rgb(254,177,35)" rx="2" ry="2" />
+<text  x="495.28" y="127.5" ></text>
+</g>
+<g >
+<title>skb_release_all (44 samples, 0.02%)</title><rect x="1086.5" y="437" width="0.2" height="15.0" fill="rgb(251,15,6)" rx="2" ry="2" />
+<text  x="1089.45" y="447.5" ></text>
+</g>
+<g >
+<title>__vdso_gettimeofday (25 samples, 0.01%)</title><rect x="164.6" y="453" width="0.1" height="15.0" fill="rgb(238,17,14)" rx="2" ry="2" />
+<text  x="167.56" y="463.5" ></text>
+</g>
+<g >
+<title>[unknown] (77 samples, 0.04%)</title><rect x="10.0" y="645" width="0.5" height="15.0" fill="rgb(233,125,37)" rx="2" ry="2" />
+<text  x="13.00" y="655.5" ></text>
+</g>
+<g >
+<title>muduo::CurrentThread::tid (51 samples, 0.03%)</title><rect x="762.6" y="533" width="0.3" height="15.0" fill="rgb(236,47,33)" rx="2" ry="2" />
+<text  x="765.56" y="543.5" ></text>
+</g>
+<g >
+<title>ikcp_peeksize (60 samples, 0.03%)</title><rect x="786.6" y="581" width="0.3" height="15.0" fill="rgb(212,223,48)" rx="2" ry="2" />
+<text  x="789.56" y="591.5" ></text>
+</g>
+<g >
+<title>alloc_skb_with_frags (11,151 samples, 5.63%)</title><rect x="449.2" y="181" width="66.4" height="15.0" fill="rgb(216,166,49)" rx="2" ry="2" />
+<text  x="452.19" y="191.5" >alloc_s..</text>
+</g>
+<g >
+<title>_copy_to_iter (22 samples, 0.01%)</title><rect x="931.7" y="453" width="0.2" height="15.0" fill="rgb(249,194,40)" rx="2" ry="2" />
+<text  x="934.72" y="463.5" ></text>
+</g>
+<g >
+<title>std::get&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (699 samples, 0.35%)</title><rect x="634.8" y="421" width="4.1" height="15.0" fill="rgb(250,23,24)" rx="2" ry="2" />
+<text  x="637.77" y="431.5" ></text>
+</g>
+<g >
+<title>std::__get_helper&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (118 samples, 0.06%)</title><rect x="634.1" y="421" width="0.7" height="15.0" fill="rgb(236,92,53)" rx="2" ry="2" />
+<text  x="637.07" y="431.5" ></text>
+</g>
+<g >
+<title>muduo::net::EPollPoller::fillActiveChannels (77 samples, 0.04%)</title><rect x="10.0" y="613" width="0.5" height="15.0" fill="rgb(206,119,10)" rx="2" ry="2" />
+<text  x="13.00" y="623.5" ></text>
+</g>
+<g >
+<title>std::enable_shared_from_this&lt;KCPSession&gt;::shared_from_this (731 samples, 0.37%)</title><rect x="110.8" y="549" width="4.4" height="15.0" fill="rgb(254,105,27)" rx="2" ry="2" />
+<text  x="113.83" y="559.5" ></text>
+</g>
+<g >
+<title>ikcp_parse_una (1,176 samples, 0.59%)</title><rect x="731.0" y="549" width="7.0" height="15.0" fill="rgb(231,17,19)" rx="2" ry="2" />
+<text  x="733.97" y="559.5" ></text>
+</g>
+<g >
+<title>__check_object_size (37 samples, 0.02%)</title><rect x="908.1" y="453" width="0.2" height="15.0" fill="rgb(219,166,7)" rx="2" ry="2" />
+<text  x="911.05" y="463.5" ></text>
+</g>
+<g >
+<title>pvclock_clocksource_read (434 samples, 0.22%)</title><rect x="1174.7" y="549" width="2.6" height="15.0" fill="rgb(252,210,7)" rx="2" ry="2" />
+<text  x="1177.74" y="559.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;unsigned int&gt; (21 samples, 0.01%)</title><rect x="235.1" y="405" width="0.2" height="15.0" fill="rgb(231,17,14)" rx="2" ry="2" />
+<text  x="238.15" y="415.5" ></text>
+</g>
+<g >
+<title>__fsnotify_parent (237 samples, 0.12%)</title><rect x="873.9" y="533" width="1.4" height="15.0" fill="rgb(251,37,33)" rx="2" ry="2" />
+<text  x="876.92" y="543.5" ></text>
+</g>
+<g >
+<title>ikcp_waitsnd (55 samples, 0.03%)</title><rect x="760.8" y="565" width="0.4" height="15.0" fill="rgb(210,21,3)" rx="2" ry="2" />
+<text  x="763.85" y="575.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (629 samples, 0.32%)</title><rect x="1138.8" y="597" width="3.7" height="15.0" fill="rgb(234,24,24)" rx="2" ry="2" />
+<text  x="1141.76" y="607.5" ></text>
+</g>
+<g >
+<title>__fdget (238 samples, 0.12%)</title><rect x="1135.6" y="613" width="1.4" height="15.0" fill="rgb(206,226,11)" rx="2" ry="2" />
+<text  x="1138.58" y="623.5" ></text>
+</g>
+<g >
+<title>__zone_watermark_ok (54 samples, 0.03%)</title><rect x="469.6" y="85" width="0.3" height="15.0" fill="rgb(254,198,11)" rx="2" ry="2" />
+<text  x="472.57" y="95.5" ></text>
+</g>
+<g >
+<title>muduo::CurrentThread::tid (22 samples, 0.01%)</title><rect x="644.5" y="453" width="0.1" height="15.0" fill="rgb(227,162,19)" rx="2" ry="2" />
+<text  x="647.48" y="463.5" ></text>
+</g>
+<g >
+<title>kmem_cache_alloc_node (33 samples, 0.02%)</title><rect x="515.3" y="165" width="0.2" height="15.0" fill="rgb(217,88,42)" rx="2" ry="2" />
+<text  x="518.28" y="175.5" ></text>
+</g>
+<g >
+<title>security_socket_recvmsg (753 samples, 0.38%)</title><rect x="893.1" y="469" width="4.5" height="15.0" fill="rgb(220,155,16)" rx="2" ry="2" />
+<text  x="896.08" y="479.5" ></text>
+</g>
+<g >
+<title>mutex_unlock (124 samples, 0.06%)</title><rect x="1162.9" y="581" width="0.8" height="15.0" fill="rgb(245,25,20)" rx="2" ry="2" />
+<text  x="1165.92" y="591.5" ></text>
+</g>
+<g >
+<title>KCPSession::OnKCPOutput (49 samples, 0.02%)</title><rect x="198.0" y="437" width="0.3" height="15.0" fill="rgb(225,175,17)" rx="2" ry="2" />
+<text  x="200.97" y="447.5" ></text>
+</g>
+<g >
+<title>__check_heap_object (18 samples, 0.01%)</title><rect x="389.3" y="181" width="0.1" height="15.0" fill="rgb(216,74,12)" rx="2" ry="2" />
+<text  x="392.33" y="191.5" ></text>
+</g>
+<g >
+<title>write@plt (20 samples, 0.01%)</title><rect x="584.4" y="357" width="0.1" height="15.0" fill="rgb(245,104,2)" rx="2" ry="2" />
+<text  x="587.39" y="367.5" ></text>
+</g>
+<g >
+<title>sk_filter_trim_cap (31 samples, 0.02%)</title><rect x="331.0" y="213" width="0.2" height="15.0" fill="rgb(211,173,7)" rx="2" ry="2" />
+<text  x="334.01" y="223.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::shared_ptr&lt;KCPSession&gt;, std::allocator&lt;std::shared_ptr&lt;KCPSession&gt; &gt; &gt;::size (90 samples, 0.05%)</title><rect x="799.0" y="597" width="0.5" height="15.0" fill="rgb(248,36,22)" rx="2" ry="2" />
+<text  x="802.00" y="607.5" ></text>
+</g>
+<g >
+<title>security_file_permission (37 samples, 0.02%)</title><rect x="583.0" y="277" width="0.2" height="15.0" fill="rgb(205,64,48)" rx="2" ry="2" />
+<text  x="586.01" y="287.5" ></text>
+</g>
+<g >
+<title>apparmor_file_permission (1,014 samples, 0.51%)</title><rect x="1095.8" y="501" width="6.0" height="15.0" fill="rgb(221,167,33)" rx="2" ry="2" />
+<text  x="1098.75" y="511.5" ></text>
+</g>
+<g >
+<title>muduo::Timestamp::now (854 samples, 0.43%)</title><rect x="1183.4" y="677" width="5.1" height="15.0" fill="rgb(225,89,29)" rx="2" ry="2" />
+<text  x="1186.40" y="687.5" ></text>
+</g>
+<g >
+<title>sock_read_iter (69 samples, 0.03%)</title><rect x="1087.2" y="517" width="0.4" height="15.0" fill="rgb(209,145,35)" rx="2" ry="2" />
+<text  x="1090.22" y="527.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (7,939 samples, 4.01%)</title><rect x="1131.0" y="661" width="47.2" height="15.0" fill="rgb(218,119,1)" rx="2" ry="2" />
+<text  x="1133.96" y="671.5" >entr..</text>
+</g>
+<g >
+<title>std::get&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (1,642 samples, 0.83%)</title><rect x="774.1" y="533" width="9.7" height="15.0" fill="rgb(205,129,20)" rx="2" ry="2" />
+<text  x="777.06" y="543.5" ></text>
+</g>
+<g >
+<title>KCPSession::peer_address (52 samples, 0.03%)</title><rect x="233.6" y="405" width="0.4" height="15.0" fill="rgb(216,181,20)" rx="2" ry="2" />
+<text  x="236.64" y="415.5" ></text>
+</g>
+<g >
+<title>ikcp_available_wnd_in_bytes (359 samples, 0.18%)</title><rect x="167.0" y="453" width="2.1" height="15.0" fill="rgb(240,221,40)" rx="2" ry="2" />
+<text  x="170.00" y="463.5" ></text>
+</g>
+<g >
+<title>std::get&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (308 samples, 0.16%)</title><rect x="783.8" y="549" width="1.9" height="15.0" fill="rgb(214,60,35)" rx="2" ry="2" />
+<text  x="786.84" y="559.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::OnRead (129,994 samples, 65.59%)</title><rect x="25.6" y="613" width="773.9" height="15.0" fill="rgb(205,93,45)" rx="2" ry="2" />
+<text  x="28.58" y="623.5" >SessionBenchmark::OnRead</text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;char const*, std::vector&lt;char, std::allocator&lt;char&gt; &gt; &gt;::__normal_iterator (77 samples, 0.04%)</title><rect x="642.4" y="421" width="0.5" height="15.0" fill="rgb(219,105,33)" rx="2" ry="2" />
+<text  x="645.44" y="431.5" ></text>
+</g>
+<g >
+<title>put_pid (37 samples, 0.02%)</title><rect x="892.9" y="469" width="0.2" height="15.0" fill="rgb(253,66,1)" rx="2" ry="2" />
+<text  x="895.86" y="479.5" ></text>
+</g>
+<g >
+<title>__fdget_pos (44 samples, 0.02%)</title><rect x="300.4" y="309" width="0.3" height="15.0" fill="rgb(251,220,33)" rx="2" ry="2" />
+<text  x="303.40" y="319.5" ></text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt;::_M_head (50 samples, 0.03%)</title><rect x="657.5" y="485" width="0.3" height="15.0" fill="rgb(237,90,30)" rx="2" ry="2" />
+<text  x="660.53" y="495.5" ></text>
+</g>
+<g >
+<title>KCPSession::Write (17 samples, 0.01%)</title><rect x="124.0" y="501" width="0.1" height="15.0" fill="rgb(205,30,25)" rx="2" ry="2" />
+<text  x="126.96" y="511.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::shared_ptr&lt;KCPSession&gt;, std::allocator&lt;std::shared_ptr&lt;KCPSession&gt; &gt; &gt;::operator[] (190 samples, 0.10%)</title><rect x="797.9" y="597" width="1.1" height="15.0" fill="rgb(205,218,29)" rx="2" ry="2" />
+<text  x="800.87" y="607.5" ></text>
+</g>
+<g >
+<title>ikcp_need_drain (236 samples, 0.12%)</title><rect x="592.8" y="453" width="1.4" height="15.0" fill="rgb(238,88,45)" rx="2" ry="2" />
+<text  x="595.76" y="463.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr_access&lt;KCPSession,  (568 samples, 0.29%)</title><rect x="792.7" y="597" width="3.3" height="15.0" fill="rgb(238,186,36)" rx="2" ry="2" />
+<text  x="795.65" y="607.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock (701 samples, 0.35%)</title><rect x="564.4" y="181" width="4.2" height="15.0" fill="rgb(240,28,3)" rx="2" ry="2" />
+<text  x="567.42" y="191.5" ></text>
+</g>
+<g >
+<title>get_mem_cgroup_from_mm (1,077 samples, 0.54%)</title><rect x="505.5" y="117" width="6.4" height="15.0" fill="rgb(225,11,9)" rx="2" ry="2" />
+<text  x="508.49" y="127.5" ></text>
+</g>
+<g >
+<title>sk_filter_trim_cap (1,033 samples, 0.52%)</title><rect x="381.5" y="197" width="6.2" height="15.0" fill="rgb(217,26,4)" rx="2" ry="2" />
+<text  x="384.55" y="207.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;int, std::allocator&lt;int&gt; &gt;::operator[] (65 samples, 0.03%)</title><rect x="583.8" y="357" width="0.4" height="15.0" fill="rgb(228,57,33)" rx="2" ry="2" />
+<text  x="586.83" y="367.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access&lt;SessionBenchmark::Initialize (63 samples, 0.03%)</title><rect x="584.8" y="373" width="0.3" height="15.0" fill="rgb(253,1,32)" rx="2" ry="2" />
+<text  x="587.76" y="383.5" ></text>
+</g>
+<g >
+<title>std::__get_helper&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt; (482 samples, 0.24%)</title><rect x="636.1" y="405" width="2.8" height="15.0" fill="rgb(220,161,23)" rx="2" ry="2" />
+<text  x="639.06" y="415.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;char*, std::vector&lt;char, std::allocator&lt;char&gt; &gt; &gt;::operator* (28 samples, 0.01%)</title><rect x="106.8" y="517" width="0.2" height="15.0" fill="rgb(205,226,0)" rx="2" ry="2" />
+<text  x="109.82" y="527.5" ></text>
+</g>
+<g >
+<title>copyin (191 samples, 0.10%)</title><rect x="432.8" y="165" width="1.1" height="15.0" fill="rgb(246,217,29)" rx="2" ry="2" />
+<text  x="435.80" y="175.5" ></text>
+</g>
+<g >
+<title>iov_iter_init (53 samples, 0.03%)</title><rect x="876.4" y="517" width="0.3" height="15.0" fill="rgb(253,208,23)" rx="2" ry="2" />
+<text  x="879.41" y="527.5" ></text>
+</g>
+<g >
+<title>sock_alloc_send_pskb (12,313 samples, 6.21%)</title><rect x="447.4" y="197" width="73.3" height="15.0" fill="rgb(225,176,27)" rx="2" ry="2" />
+<text  x="450.44" y="207.5" >sock_all..</text>
+</g>
+<g >
+<title>KCPSession::session_id (31 samples, 0.02%)</title><rect x="591.6" y="421" width="0.2" height="15.0" fill="rgb(220,70,35)" rx="2" ry="2" />
+<text  x="594.62" y="431.5" ></text>
+</g>
+<g >
+<title>security_file_permission (2,125 samples, 1.07%)</title><rect x="1092.2" y="517" width="12.7" height="15.0" fill="rgb(212,109,27)" rx="2" ry="2" />
+<text  x="1095.23" y="527.5" ></text>
+</g>
+<g >
+<title>rcu_all_qs (21 samples, 0.01%)</title><rect x="502.3" y="117" width="0.2" height="15.0" fill="rgb(207,154,28)" rx="2" ry="2" />
+<text  x="505.33" y="127.5" ></text>
+</g>
+<g >
+<title>consume_skb (13,550 samples, 6.84%)</title><rect x="1005.6" y="437" width="80.6" height="15.0" fill="rgb(244,74,44)" rx="2" ry="2" />
+<text  x="1008.57" y="447.5" >consume_skb</text>
+</g>
+<g >
+<title>aa_unix_peer_perm.part.7 (73 samples, 0.04%)</title><rect x="361.4" y="165" width="0.4" height="15.0" fill="rgb(242,213,13)" rx="2" ry="2" />
+<text  x="364.38" y="175.5" ></text>
+</g>
+<g >
+<title>__fsnotify_parent (38 samples, 0.02%)</title><rect x="860.7" y="549" width="0.3" height="15.0" fill="rgb(253,176,52)" rx="2" ry="2" />
+<text  x="863.75" y="559.5" ></text>
+</g>
+<g >
+<title>ikcp_shrink_buf (62 samples, 0.03%)</title><rect x="760.5" y="565" width="0.3" height="15.0" fill="rgb(235,88,35)" rx="2" ry="2" />
+<text  x="763.46" y="575.5" ></text>
+</g>
+<g >
+<title>_raw_spin_unlock_irqrestore (1,245 samples, 0.63%)</title><rect x="1144.3" y="581" width="7.4" height="15.0" fill="rgb(205,69,36)" rx="2" ry="2" />
+<text  x="1147.29" y="591.5" ></text>
+</g>
+<g >
+<title>std::_Head_base&lt;0ul, IKCPCB*, false&gt;::_M_head (67 samples, 0.03%)</title><rect x="637.0" y="389" width="0.4" height="15.0" fill="rgb(252,160,14)" rx="2" ry="2" />
+<text  x="639.99" y="399.5" ></text>
+</g>
+<g >
+<title>security_socket_recvmsg (40 samples, 0.02%)</title><rect x="889.0" y="485" width="0.3" height="15.0" fill="rgb(219,190,32)" rx="2" ry="2" />
+<text  x="892.05" y="495.5" ></text>
+</g>
+<g >
+<title>ikcp_waitsnd (100 samples, 0.05%)</title><rect x="596.5" y="437" width="0.6" height="15.0" fill="rgb(240,68,9)" rx="2" ry="2" />
+<text  x="599.51" y="447.5" ></text>
+</g>
+<g >
+<title>ikcp_segment_new (246 samples, 0.12%)</title><rect x="738.1" y="549" width="1.5" height="15.0" fill="rgb(226,78,29)" rx="2" ry="2" />
+<text  x="741.13" y="559.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;void*&gt; (20 samples, 0.01%)</title><rect x="235.4" y="405" width="0.1" height="15.0" fill="rgb(234,178,27)" rx="2" ry="2" />
+<text  x="238.38" y="415.5" ></text>
+</g>
+<g >
+<title>__free_pages_ok (2,866 samples, 1.45%)</title><rect x="1021.7" y="341" width="17.1" height="15.0" fill="rgb(216,85,54)" rx="2" ry="2" />
+<text  x="1024.69" y="351.5" ></text>
+</g>
+<g >
+<title>page_counter_uncharge (739 samples, 0.37%)</title><rect x="1034.2" y="309" width="4.4" height="15.0" fill="rgb(252,58,19)" rx="2" ry="2" />
+<text  x="1037.24" y="319.5" ></text>
+</g>
+<g >
+<title>ikcp_segment_delete (44 samples, 0.02%)</title><rect x="105.5" y="549" width="0.3" height="15.0" fill="rgb(229,15,39)" rx="2" ry="2" />
+<text  x="108.51" y="559.5" ></text>
+</g>
+<g >
+<title>apparmor_socket_recvmsg (239 samples, 0.12%)</title><rect x="896.1" y="453" width="1.5" height="15.0" fill="rgb(219,40,9)" rx="2" ry="2" />
+<text  x="899.14" y="463.5" ></text>
+</g>
+<g >
+<title>session_benchma (198,192 samples, 100.00%)</title><rect x="10.0" y="693" width="1180.0" height="15.0" fill="rgb(210,23,18)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" >session_benchma</text>
+</g>
+<g >
+<title>std::_Function_base::_Base_manager&lt;SessionBenchmark::Initialize (148 samples, 0.07%)</title><rect x="651.1" y="517" width="0.9" height="15.0" fill="rgb(205,222,30)" rx="2" ry="2" />
+<text  x="654.08" y="527.5" ></text>
+</g>
+<g >
+<title>__fdget_pos (828 samples, 0.42%)</title><rect x="855.2" y="549" width="4.9" height="15.0" fill="rgb(217,179,12)" rx="2" ry="2" />
+<text  x="858.19" y="559.5" ></text>
+</g>
+<g >
+<title>ikcp_need_drain (20 samples, 0.01%)</title><rect x="640.1" y="469" width="0.1" height="15.0" fill="rgb(216,83,33)" rx="2" ry="2" />
+<text  x="643.06" y="479.5" ></text>
+</g>
+<g >
+<title>__vdso_gettimeofday (47 samples, 0.02%)</title><rect x="1112.9" y="677" width="0.2" height="15.0" fill="rgb(218,215,9)" rx="2" ry="2" />
+<text  x="1115.85" y="687.5" ></text>
+</g>
+<g >
+<title>KCPSession::FlushTxQueue (317 samples, 0.16%)</title><rect x="134.8" y="453" width="1.9" height="15.0" fill="rgb(233,201,31)" rx="2" ry="2" />
+<text  x="137.80" y="463.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (219 samples, 0.11%)</title><rect x="1055.6" y="309" width="1.3" height="15.0" fill="rgb(249,167,26)" rx="2" ry="2" />
+<text  x="1058.56" y="319.5" ></text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, IKCPCB*, KCPSession::ScopedKCPCBDeleter&gt;::_M_head (216 samples, 0.11%)</title><rect x="776.1" y="517" width="1.3" height="15.0" fill="rgb(243,69,29)" rx="2" ry="2" />
+<text  x="779.13" y="527.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;KCPSession&gt;::shared_ptr&lt;KCPSession, void&gt; (670 samples, 0.34%)</title><rect x="111.2" y="533" width="4.0" height="15.0" fill="rgb(241,171,32)" rx="2" ry="2" />
+<text  x="114.20" y="543.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (60 samples, 0.03%)</title><rect x="435.6" y="181" width="0.3" height="15.0" fill="rgb(230,201,31)" rx="2" ry="2" />
+<text  x="438.59" y="191.5" ></text>
+</g>
+<g >
+<title>std::_Any_data::_M_access (49 samples, 0.02%)</title><rect x="586.8" y="357" width="0.3" height="15.0" fill="rgb(242,48,19)" rx="2" ry="2" />
+<text  x="589.77" y="367.5" ></text>
+</g>
+<g >
+<title>ikcp_encode_seg (3,930 samples, 1.98%)</title><rect x="200.5" y="437" width="23.4" height="15.0" fill="rgb(253,36,31)" rx="2" ry="2" />
+<text  x="203.53" y="447.5" >i..</text>
+</g>
+<g >
+<title>std::vector&lt;char, std::allocator&lt;char&gt; &gt;::begin (162 samples, 0.08%)</title><rect x="107.0" y="517" width="1.0" height="15.0" fill="rgb(225,157,44)" rx="2" ry="2" />
+<text  x="109.99" y="527.5" ></text>
+</g>
+<g >
+<title>muduo::Logger::logLevel (54 samples, 0.03%)</title><rect x="583.5" y="357" width="0.3" height="15.0" fill="rgb(234,81,19)" rx="2" ry="2" />
+<text  x="586.51" y="367.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (915 samples, 0.46%)</title><rect x="623.7" y="421" width="5.4" height="15.0" fill="rgb(241,118,0)" rx="2" ry="2" />
+<text  x="626.67" y="431.5" ></text>
+</g>
+<g >
+<title>ikcp_calc_wnd (81 samples, 0.04%)</title><rect x="168.0" y="421" width="0.5" height="15.0" fill="rgb(245,0,29)" rx="2" ry="2" />
+<text  x="170.99" y="431.5" ></text>
+</g>
+<g >
+<title>std::__atomic_base&lt;unsigned long&gt;::operator++ (21 samples, 0.01%)</title><rect x="650.3" y="501" width="0.1" height="15.0" fill="rgb(211,0,43)" rx="2" ry="2" />
+<text  x="653.30" y="511.5" ></text>
+</g>
+<g >
+<title>sock_poll (24 samples, 0.01%)</title><rect x="1161.3" y="565" width="0.1" height="15.0" fill="rgb(207,168,46)" rx="2" ry="2" />
+<text  x="1164.25" y="575.5" ></text>
+</g>
+<g >
+<title>KCPReceivedPacket::KCPReceivedPacket (574 samples, 0.29%)</title><rect x="39.2" y="581" width="3.5" height="15.0" fill="rgb(205,159,12)" rx="2" ry="2" />
+<text  x="42.24" y="591.5" ></text>
+</g>
+<g >
+<title>std::forward&lt;muduo::net::Buffer*&gt; (38 samples, 0.02%)</title><rect x="652.0" y="517" width="0.2" height="15.0" fill="rgb(225,211,26)" rx="2" ry="2" />
+<text  x="655.00" y="527.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr_access&lt;KCPSession,  (51 samples, 0.03%)</title><rect x="1106.1" y="613" width="0.3" height="15.0" fill="rgb(232,105,45)" rx="2" ry="2" />
+<text  x="1109.14" y="623.5" ></text>
+</g>
+<g >
+<title>muduo::Logger::logLevel (24 samples, 0.01%)</title><rect x="1105.7" y="613" width="0.2" height="15.0" fill="rgb(236,123,44)" rx="2" ry="2" />
+<text  x="1108.75" y="623.5" ></text>
+</g>
+<g >
+<title>SessionBenchmark::Initialize (182,072 samples, 91.87%)</title><rect x="22.9" y="629" width="1084.0" height="15.0" fill="rgb(226,84,9)" rx="2" ry="2" />
+<text  x="25.90" y="639.5" >SessionBenchmark::Initialize</text>
+</g>
+<g >
+<title>fsnotify (375 samples, 0.19%)</title><rect x="1087.6" y="533" width="2.3" height="15.0" fill="rgb(249,90,14)" rx="2" ry="2" />
+<text  x="1090.64" y="543.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::retrieveAll (127 samples, 0.06%)</title><rect x="643.2" y="469" width="0.8" height="15.0" fill="rgb(243,215,37)" rx="2" ry="2" />
+<text  x="646.21" y="479.5" ></text>
+</g>
+<g >
+<title>skb_release_data (30 samples, 0.02%)</title><rect x="1085.8" y="421" width="0.2" height="15.0" fill="rgb(227,151,14)" rx="2" ry="2" />
+<text  x="1088.83" y="431.5" ></text>
+</g>
+<g >
+<title>unix_peer_get (1,752 samples, 0.88%)</title><rect x="558.2" y="197" width="10.4" height="15.0" fill="rgb(248,106,27)" rx="2" ry="2" />
+<text  x="561.17" y="207.5" ></text>
+</g>
+<g >
+<title>fsnotify (27 samples, 0.01%)</title><rect x="307.5" y="293" width="0.1" height="15.0" fill="rgb(236,189,2)" rx="2" ry="2" />
+<text  x="310.46" y="303.5" ></text>
+</g>
+<g >
+<title>[[vdso]] (514 samples, 0.26%)</title><rect x="1185.4" y="645" width="3.1" height="15.0" fill="rgb(237,208,9)" rx="2" ry="2" />
+<text  x="1188.43" y="655.5" ></text>
+</g>
+<g >
+<title>kfree (18 samples, 0.01%)</title><rect x="1015.8" y="389" width="0.2" height="15.0" fill="rgb(218,42,12)" rx="2" ry="2" />
+<text  x="1018.84" y="399.5" ></text>
+</g>
+<g >
+<title>new_sync_read (35,355 samples, 17.84%)</title><rect x="876.7" y="517" width="210.5" height="15.0" fill="rgb(228,189,7)" rx="2" ry="2" />
+<text  x="879.72" y="527.5" >new_sync_read</text>
+</g>
+<g >
+<title>copy_user_enhanced_fast_string (5,893 samples, 2.97%)</title><rect x="964.0" y="421" width="35.1" height="15.0" fill="rgb(241,94,8)" rx="2" ry="2" />
+<text  x="966.99" y="431.5" >co..</text>
+</g>
+<g >
+<title>[unknown] (185,176 samples, 93.43%)</title><rect x="10.0" y="677" width="1102.5" height="15.0" fill="rgb(232,26,15)" rx="2" ry="2" />
+<text  x="13.00" y="687.5" >[unknown]</text>
+</g>
+<g >
+<title>std::vector&lt;char, std::allocator&lt;char&gt; &gt;::begin (241 samples, 0.12%)</title><rect x="641.5" y="437" width="1.4" height="15.0" fill="rgb(246,13,7)" rx="2" ry="2" />
+<text  x="644.47" y="447.5" ></text>
+</g>
+<g >
+<title>apparmor_socket_sendmsg (38 samples, 0.02%)</title><rect x="326.4" y="213" width="0.3" height="15.0" fill="rgb(215,107,50)" rx="2" ry="2" />
+<text  x="329.45" y="223.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;IKCPCB, KCPSession::ScopedKCPCBDeleter&gt;::get (1,353 samples, 0.68%)</title><rect x="631.8" y="453" width="8.1" height="15.0" fill="rgb(213,69,29)" rx="2" ry="2" />
+<text  x="634.82" y="463.5" ></text>
+</g>
+<g >
+<title>std::operator&amp; (26 samples, 0.01%)</title><rect x="137.5" y="421" width="0.1" height="15.0" fill="rgb(244,25,12)" rx="2" ry="2" />
+<text  x="140.45" y="431.5" ></text>
+</g>
+<g >
+<title>ep_poll (6,787 samples, 3.42%)</title><rect x="1137.4" y="613" width="40.4" height="15.0" fill="rgb(226,62,38)" rx="2" ry="2" />
+<text  x="1140.35" y="623.5" >ep_..</text>
+</g>
+<g >
+<title>std::__shared_ptr_access&lt;KCPSession,  (64 samples, 0.03%)</title><rect x="649.2" y="469" width="0.3" height="15.0" fill="rgb(228,100,52)" rx="2" ry="2" />
+<text  x="652.15" y="479.5" ></text>
+</g>
+<g >
+<title>ikcp_free (40 samples, 0.02%)</title><rect x="105.3" y="517" width="0.2" height="15.0" fill="rgb(233,139,15)" rx="2" ry="2" />
+<text  x="108.27" y="527.5" ></text>
+</g>
+<g >
+<title>__kmalloc_reserve.isra.43 (5,944 samples, 3.00%)</title><rect x="458.4" y="149" width="35.4" height="15.0" fill="rgb(239,51,20)" rx="2" ry="2" />
+<text  x="461.43" y="159.5" >__..</text>
+</g>
+<g >
+<title>unix_destruct_scm (34 samples, 0.02%)</title><rect x="1085.6" y="405" width="0.2" height="15.0" fill="rgb(252,218,4)" rx="2" ry="2" />
+<text  x="1088.63" y="415.5" ></text>
+</g>
+<g >
+<title>aa_file_perm (194 samples, 0.10%)</title><rect x="581.5" y="213" width="1.1" height="15.0" fill="rgb(230,31,3)" rx="2" ry="2" />
+<text  x="584.45" y="223.5" ></text>
+</g>
+<g >
+<title>muduo::Timestamp::microSecondsSinceEpoch (18 samples, 0.01%)</title><rect x="622.2" y="453" width="0.1" height="15.0" fill="rgb(225,130,45)" rx="2" ry="2" />
+<text  x="625.23" y="463.5" ></text>
+</g>
+<g >
+<title>__alloc_pages_nodemask (3,663 samples, 1.85%)</title><rect x="467.0" y="101" width="21.8" height="15.0" fill="rgb(217,179,5)" rx="2" ry="2" />
+<text  x="470.01" y="111.5" >_..</text>
+</g>
+<g >
+<title>sock_write_iter (42,408 samples, 21.40%)</title><rect x="319.8" y="245" width="252.5" height="15.0" fill="rgb(248,142,6)" rx="2" ry="2" />
+<text  x="322.84" y="255.5" >sock_write_iter</text>
+</g>
+<g >
+<title>std::operator&amp; (225 samples, 0.11%)</title><rect x="64.5" y="533" width="1.4" height="15.0" fill="rgb(208,77,19)" rx="2" ry="2" />
+<text  x="67.53" y="543.5" ></text>
+</g>
+<g >
+<title>aa_file_perm (29 samples, 0.01%)</title><rect x="577.9" y="229" width="0.1" height="15.0" fill="rgb(234,187,1)" rx="2" ry="2" />
+<text  x="580.85" y="239.5" ></text>
+</g>
+<g >
+<title>KCPSession::session_id (125 samples, 0.06%)</title><rect x="234.0" y="405" width="0.7" height="15.0" fill="rgb(253,10,13)" rx="2" ry="2" />
+<text  x="236.95" y="415.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_M_empty (24 samples, 0.01%)</title><rect x="110.3" y="549" width="0.1" height="15.0" fill="rgb(254,130,40)" rx="2" ry="2" />
+<text  x="113.29" y="559.5" ></text>
+</g>
+<g >
+<title>ikcp_waitsnd (98 samples, 0.05%)</title><rect x="168.5" y="421" width="0.6" height="15.0" fill="rgb(243,225,36)" rx="2" ry="2" />
+<text  x="171.47" y="431.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (7,919 samples, 4.00%)</title><rect x="1131.0" y="645" width="47.1" height="15.0" fill="rgb(247,144,17)" rx="2" ry="2" />
+<text  x="1133.97" y="655.5" >do_s..</text>
+</g>
+<g >
+<title>__check_heap_object (490 samples, 0.25%)</title><rect x="391.7" y="165" width="2.9" height="15.0" fill="rgb(245,117,41)" rx="2" ry="2" />
+<text  x="394.71" y="175.5" ></text>
+</g>
+<g >
+<title>ikcp_calc_wnd (119 samples, 0.06%)</title><rect x="165.8" y="421" width="0.7" height="15.0" fill="rgb(232,66,39)" rx="2" ry="2" />
+<text  x="168.79" y="431.5" ></text>
+</g>
+<g >
+<title>muduo::net::Buffer::ensureWritableBytes (231 samples, 0.12%)</title><rect x="108.0" y="549" width="1.4" height="15.0" fill="rgb(208,183,36)" rx="2" ry="2" />
+<text  x="110.99" y="559.5" ></text>
+</g>
+<g >
+<title>muduo::net::Channel::handleEvent (295 samples, 0.15%)</title><rect x="15.0" y="661" width="1.7" height="15.0" fill="rgb(216,186,18)" rx="2" ry="2" />
+<text  x="17.95" y="671.5" ></text>
+</g>
+<g >
+<title>unix_scm_to_skb (148 samples, 0.07%)</title><rect x="568.6" y="197" width="0.9" height="15.0" fill="rgb(208,86,20)" rx="2" ry="2" />
+<text  x="571.60" y="207.5" ></text>
+</g>
+<g >
+<title>muduo::Logger::logLevel (23 samples, 0.01%)</title><rect x="792.4" y="597" width="0.1" height="15.0" fill="rgb(206,167,15)" rx="2" ry="2" />
+<text  x="795.41" y="607.5" ></text>
+</g>
+<g >
+<title>__indirect_thunk_start (34 samples, 0.02%)</title><rect x="325.9" y="213" width="0.2" height="15.0" fill="rgb(242,63,15)" rx="2" ry="2" />
+<text  x="328.88" y="223.5" ></text>
+</g>
+<g >
+<title>__kmalloc_node_track_caller (24 samples, 0.01%)</title><rect x="458.3" y="149" width="0.1" height="15.0" fill="rgb(222,96,21)" rx="2" ry="2" />
+<text  x="461.29" y="159.5" ></text>
+</g>
+<g >
+<title>__skb_try_recv_datagram (39 samples, 0.02%)</title><rect x="890.3" y="469" width="0.3" height="15.0" fill="rgb(213,151,12)" rx="2" ry="2" />
+<text  x="893.34" y="479.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (18 samples, 0.01%)</title><rect x="110.4" y="549" width="0.1" height="15.0" fill="rgb(214,204,24)" rx="2" ry="2" />
+<text  x="113.43" y="559.5" ></text>
+</g>
+<g >
+<title>ikcp_send (4,137 samples, 2.09%)</title><rect x="597.1" y="453" width="24.6" height="15.0" fill="rgb(224,111,3)" rx="2" ry="2" />
+<text  x="600.10" y="463.5" >i..</text>
+</g>
+<g >
+<title>aa_unix_peer_perm.part.7 (2,857 samples, 1.44%)</title><rect x="364.5" y="149" width="17.0" height="15.0" fill="rgb(228,119,32)" rx="2" ry="2" />
+<text  x="367.54" y="159.5" ></text>
+</g>
+</g>
+</svg>
