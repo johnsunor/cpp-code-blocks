@@ -62,7 +62,7 @@ struct PendingError {
 // wnd = min(cwnd, min(swnd, rwnd)) => [08, 16)
 // dsnd = snd_una + wnd - snd_nxt => [12, 16)
 //
-// recever:
+// receiver:
 // rwnd = rcv_wnd - nrcv_que => [08, 08 + rwnd)
 // acked(nrcv_que) => be consumed by ikcp_recv
 // rcv_nxt => ikcp_flush una => update sender's snd_una

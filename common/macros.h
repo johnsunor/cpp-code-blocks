@@ -37,7 +37,7 @@
 //#define volatile __volatile__
 
 #define ALLOW_UNUSED __attribute__((unused))
-#define UNUSED(v) ((void)(v));
+#define UNUSED(v) (void)(v)
 
 template <bool>
 struct CompileAssert {};

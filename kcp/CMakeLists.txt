@@ -6,8 +6,8 @@ if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Debug")
 endif()
 
-if (NOT MUDUO_BUILD_DIR)
-  message(FATAL_ERROR "not found MUDUO_BUILD_DIR")
+if (NOT MUDUO_INSTALL_DIR)
+  message(FATAL_ERROR "not found MUDUO_INSTALL_DIR")
 endif()
 
 # https://gcc.gnu.org/onlinedocs/gcc/Code-Gen-Options.html
@@ -43,8 +43,8 @@ if(CMAKE_BUILD_BITS EQUAL 32)
 endif()
 string(REPLACE ";" " " CMAKE_CXX_FLAGS "${CXX_FLAGS}")
 
-set(MUDUO_INCLUDE_DIR ${MUDUO_BUILD_DIR}/include/)
-set(MUDUO_LIBRARY_DIR ${MUDUO_BUILD_DIR}/lib/)
+set(MUDUO_INCLUDE_DIR ${MUDUO_INSTALL_DIR}/include/)
+set(MUDUO_LIBRARY_DIR ${MUDUO_INSTALL_DIR}/lib/)
 set(CCB_INCLUDE_DIR ../)
 
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
