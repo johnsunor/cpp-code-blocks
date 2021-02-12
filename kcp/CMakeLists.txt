@@ -38,14 +38,14 @@ set(CXX_FLAGS
  -std=c++14
  -rdynamic
 )
-if(CMAKE_BUILD_BITS EQUAL 32)
+if (CMAKE_BUILD_BITS EQUAL 32)
   list(APPEND CXX_FLAGS "-m32")
 endif()
 string(REPLACE ";" " " CMAKE_CXX_FLAGS "${CXX_FLAGS}")
 
-set(MUDUO_INCLUDE_DIR ${MUDUO_INSTALL_DIR}/include/)
-set(MUDUO_LIBRARY_DIR ${MUDUO_INSTALL_DIR}/lib/)
-set(CCB_INCLUDE_DIR ../)
+set(MUDUO_INCLUDE_DIR ${MUDUO_INSTALL_DIR}/include)
+set(MUDUO_LIBRARY_DIR ${MUDUO_INSTALL_DIR}/lib)
+set(CCB_INCLUDE_DIR ..)
 
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)
@@ -54,10 +54,10 @@ set(CMAKE_CXX_COMPILER "g++")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -fno-inline -fno-omit-frame-pointer -g -ggdb3")
 set(CMAKE_CXX_FLAGS_RELEASE "-O2 -finline-limit=1000 -DNDEBUG")
 
-find_path(TCMALLOC_INCLUDE_DIR google/heap-profiler.h REQUIRED)
-find_library(TCMALLOC_LIBRARY NAMES tcmalloc_and_profiler REQUIRED)
+find_path(TCMALLOC_INCLUDE_DIR google/heap-profiler.h)
+find_library(TCMALLOC_LIBRARY NAMES tcmalloc_and_profiler)
 
-if(TCMALLOC_INCLUDE_DIR AND TCMALLOC_LIBRARY)
+if (TCMALLOC_INCLUDE_DIR AND TCMALLOC_LIBRARY)
   message(STATUS "found tcmalloc")
 else()
   message(STATUS "not found tcmalloc")

@@ -100,4 +100,4 @@ loop.loop();
 ```
 
 ### 构建
-本地需要先构建好 [muduo](https://github.com/chenshuo/muduo) 网络库，并且编译器需要支持 C++14，当本地条件都满足后，可以通过命令：MUDUO_BUILD_DIR=XXX(muduo 库所在的目录) bash ./build.sh 进行构建
+本地需要先构建好 [muduo](https://github.com/chenshuo/muduo) 网络库，并且编译器需要支持 C++14，当本地条件都满足后，可以通过命令：MUDUO_INSTALL_DIR=XXX(muduo 库所安装的目录) bash ./build.sh 进行构建
