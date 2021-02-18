@@ -3,9 +3,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 
 #include <muduo/base/Logging.h>
 
@@ -182,8 +182,7 @@ int main(int argc, char* argv[]) {
   ASSERT_EXIT(g_timeout_sec > 0 && g_timeout_sec <= 3600);
 
   int socket_type = (g_socket_type == 1) ? SOCK_STREAM : SOCK_DGRAM;
-  int result = HANDLE_EINTR(
-      ::socketpair(AF_UNIX, socket_type | SOCK_CLOEXEC, 0, g_pipes));
+  int result = ::socketpair(AF_UNIX, socket_type | SOCK_CLOEXEC, 0, g_pipes);
   ASSERT_EXIT(result == 0);
 
   g_chpid = ::fork();

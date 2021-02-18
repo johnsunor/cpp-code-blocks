@@ -33,9 +33,9 @@ class SessionBenchmark final {
 
     pipes_.fds.resize(num_sessions);
     for (int i = 0, l = num_sessions / 2; i < l; ++i) {
-      auto ret = HANDLE_EINTR(
+      auto ret =
           ::socketpair(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0,
-                       &pipes_.fds[2 * i]));
+                       &pipes_.fds[2 * i]);
       if (ret < 0) {
         LOG_SYSFATAL << "::socketpair";
       }
