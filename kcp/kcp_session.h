@@ -58,13 +58,13 @@ struct PendingError {
 //            |<---------wnd---------->|<-acked->|     |<---------------rcv_wnd-------------|
 //
 // sender:
-// inflight = snd_una - snd_nxt => [08, 12)
+// inflight = snd_nxt - snd_una => [08, 12)
 // wnd = min(cwnd, min(swnd, rwnd)) => [08, 16)
 // dsnd = snd_una + wnd - snd_nxt => [12, 16)
 //
 // receiver:
 // rwnd = rcv_wnd - nrcv_que => [08, 08 + rwnd)
-// acked(nrcv_que) => be consumed by ikcp_recv
+// acked(nrcv_que) => to be consumed by ikcp_recv
 // rcv_nxt => ikcp_flush una => update sender's snd_una
 
 // connected -> closed
